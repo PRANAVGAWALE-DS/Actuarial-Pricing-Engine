@@ -1,0 +1,52 @@
+# =====================================================
+# .gitattributes — Line Ending Policy
+# Insurance ML Pipeline
+# Version: 4.2.0
+# =====================================================
+# Enforce LF for all text files regardless of core.autocrlf setting.
+# Prevents CRLF in files that are sourced in Docker/Linux (env files,
+# shell scripts, YAML) while keeping Windows-native files unaffected.
+
+# Default: normalise all text files to LF in the repo
+* text=auto eol=lf
+
+# Explicitly LF — files sourced in Linux/Docker contexts
+.env              text eol=lf
+.env.*            text eol=lf
+*.sh              text eol=lf
+*.yaml            text eol=lf
+*.yml             text eol=lf
+Makefile          text eol=lf
+*.toml            text eol=lf
+*.cfg             text eol=lf
+*.ini             text eol=lf
+*.txt             text eol=lf
+*.md              text eol=lf
+*.py              text eol=lf
+*.json            text eol=lf
+*.csv             text eol=lf
+
+# FIX [LOW]: *.ipynb added as text with LF normalisation.
+# Jupyter notebooks are JSON — without this rule, checkouts on Windows
+# may produce CRLF line endings, causing noisy diffs and check-ast failures
+# in pre-commit hooks.
+# NOTE: if nbstripout is configured (see .pre-commit-config.yaml), add:
+#   *.ipynb  filter=nbstripout diff=ipynb
+# to automatically strip outputs on commit.
+*.ipynb           text eol=lf
+
+# Binary — never touch line endings
+*.joblib          binary
+*.pkl             binary
+*.ubj             binary
+*.db              binary
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.ico             binary
+*.pdf             binary
+*.pt              binary
+*.pth             binary
+*.onnx            binary
+*.h5              binary

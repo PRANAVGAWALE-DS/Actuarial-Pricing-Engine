@@ -1,0 +1,219 @@
+# =====================================================
+# Pre-commit Configuration
+# Version: 4.2.0
+# =====================================================
+# Installation:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Usage:
+#   pre-commit run --all-files  # Run on all files
+#   pre-commit run black        # Run specific hook
+#   git commit                  # Automatic on commit
+# =====================================================
+
+repos:
+  # ===================================================
+  # Standard Pre-commit Hooks
+  # ===================================================
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.6.0
+  hooks:
+      # File formatting
+  - id: trailing-whitespace
+    args: [--markdown-linebreak-ext=md]
+  - id: end-of-file-fixer
+  - id: mixed-line-ending
+    args: [--fix=lf]
+
+      # Syntax checking
+  - id: check-yaml
+    args: [--safe]
+  - id: check-toml
+  - id: check-json
+  - id: check-xml
+
+      # Git checks
+  - id: check-added-large-files
+    # FIX [D11-P1]: Reduced from 5000 KB → 500 KB per security strategy doc.
+    # A 5 MB limit allowed near-complete model artifact slices through git.
+    # Model artifacts that legitimately need versioning should use DVC.
+    # To temporarily bypass for a known-large file: git add -f <file>
+    args: [--maxkb=500]
+  - id: check-merge-conflict
+  - id: check-case-conflict
+
+      # Python checks
+  - id: check-ast
+  - id: check-builtin-literals
+  - id: check-docstring-first
+  - id: debug-statements
+  - id: name-tests-test
+    args: [--pytest-test-first]
+
+      # Security
+  - id: detect-private-key
+
+      # Data files
+  - id: check-executables-have-shebangs
+  - id: fix-byte-order-marker
+
+  # ===================================================
+  # Ruff - Lint + Import Sort + Format
+  # ruff check : lint rules (E/W/F/I/B/C4/UP) + --fix
+  # ruff format: black-compatible formatter
+  # ===================================================
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.8.0
+  hooks:
+  - id: ruff
+    args: [--fix]
+  - id: ruff-format
+
+  # ===================================================
+  # Type Checking - mypy
+  # ===================================================
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.18.2
+  hooks:
+  - id: mypy
+    args: [--ignore-missing-imports, --no-strict-optional]
+    additional_dependencies: [types-requests, types-PyYAML, pydantic]
+
+  # ===================================================
+  # Security - Bandit
+  # ===================================================
+- repo: https://github.com/PyCQA/bandit
+  rev: 1.8.6
+  hooks:
+  - id: bandit
+    args: [-c, pyproject.toml]
+    additional_dependencies: ['bandit[toml]']
+
+  # ===================================================
+  # Docstring Coverage
+  # ===================================================
+- repo: https://github.com/econchick/interrogate
+  # FIX [MEDIUM]: rev was 1.7.0, which does not exist on PyPI (latest known
+  # stable release is 1.5.0). Using a non-existent rev causes pre-commit
+  # install to fail with a git fetch error.
+  # Verify the latest tag at: https://github.com/econchick/interrogate/tags
+  rev: 1.5.0
+  hooks:
+  - id: interrogate
+    # args structure: all flags first, then the positional path to interrogate.
+    # --exclude=tests excludes the tests/ subtree within the interrogated path.
+    # src/insurance_ml is the positional target (path to check).
+    args: [--verbose, --fail-under=50, --ignore-init-method, --ignore-init-module, --ignore-magic, --ignore-module, --ignore-private, --ignore-nested-functions, --exclude=tests, src/insurance_ml]
+
+  # ===================================================
+  # Upgrade Python Syntax
+  # ===================================================
+- repo: https://github.com/asottile/pyupgrade
+  rev: v3.19.1
+  hooks:
+  - id: pyupgrade
+    args: [--py311-plus]
+
+  # ===================================================
+  # YAML Formatting
+  # ===================================================
+- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+  rev: v2.14.0
+  hooks:
+  - id: pretty-format-yaml
+    args: [--autofix, --indent, '2']
+    # FIX [MEDIUM]: scoped away from .github/workflows/ and docker/.
+    # GitHub Actions YAML has strict syntax requirements; auto-reformatting
+    # can silently break CI pipeline definitions. docker/docker-compose.yml
+    # may also rely on specific formatting conventions.
+    exclude: ^(\.github/|docker/)
+
+  # ===================================================
+  # Markdown Formatting
+  # ===================================================
+- repo: https://github.com/executablebooks/mdformat
+  rev: 0.7.17
+  hooks:
+  - id: mdformat
+    additional_dependencies:
+    - mdformat-gfm
+    - mdformat-ruff  # mdformat-black conflicts with ruff formatter; mdformat-ruff is the correct pairing
+
+  # ===================================================
+  # Jupyter Notebook Output Stripping
+  # ===================================================
+  # FIX [HIGH] NB2: nbstripout moved BEFORE nbqa-ruff.
+  # Pre-commit runs hooks in declaration order. nbqa-ruff lints notebook cells;
+  # if outputs are still present during linting they may contain sensitive data
+  # (printed credentials, large arrays, model output) that gets processed by
+  # the linter and surfaced in error messages before being stripped.
+  # Correct order: strip outputs first → then lint the clean source cells.
+  # After adding: run `pre-commit install` to register the nbstripout git filter.
+- repo: https://github.com/kynan/nbstripout
+  rev: 0.7.1
+  hooks:
+  - id: nbstripout
+
+  # ===================================================
+  # Jupyter Notebook Cleaning
+  # ===================================================
+- repo: https://github.com/nbQA-dev/nbQA
+  rev: 1.9.1
+  hooks:
+  - id: nbqa-ruff
+    args: [--fix]
+
+# =====================================================
+# Configuration Options
+# =====================================================
+default_language_version:
+  python: python3.11
+
+# Fail fast: stop after first failure
+fail_fast: false
+
+# Files to exclude from all hooks
+# FIX [RD3]: narrowed from blanket 'data/' to specific subdirectories.
+# A blanket 'data/' exclude silently skips ALL files inside data/ — including
+# any accidentally committed Python scripts or credentials files. Narrowing to
+# known-large or known-binary subdirectories preserves hook coverage for
+# anything else that might land in data/ (e.g., a stray .py or .env file).
+exclude: |
+  (?x)^(
+      \.git/|
+      \.mypy_cache/|
+      \.pytest_cache/|
+      \.venv/|
+      venv/|
+      build/|
+      dist/|
+      \.eggs/|
+      .*\.egg-info/|
+      mlruns/|
+      models/|
+      logs/|
+      data/raw/|
+      data/processed/|
+      data/databases/|
+      data/sample/|
+      htmlcov/|
+      \.coverage|
+      migrations/
+  )
+
+# =====================================================
+# Notes
+# =====================================================
+# To skip hooks temporarily:
+#   git commit --no-verify
+#
+# To run manually:
+#   pre-commit run --all-files
+#
+# To update hooks:
+#   pre-commit autoupdate
+#
+# To uninstall:
+#   pre-commit uninstall
+# =====================================================

@@ -1,0 +1,83 @@
+# =====================================================
+# Project: Improved ML Insurance
+# Environment: Windows 11 + NVIDIA RTX 3050 (CUDA 12.x)
+# GPU-Enabled: Torch CU124 build
+# Author: PG
+# CLEANED: Removed 31 unused packages
+# =====================================================
+
+# ── GPU + Deep Learning ──────────────────────────────────────────────────────
+# NOTE: torch must be installed via pytorch index to get CUDA build.
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+#               --index-url https://download.pytorch.org/whl/cu124
+# ────────────────────────────────────────────────────────────────────────────
+torch==2.6.0+cu124
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# ── Core Machine Learning & Optimization ─────────────────────────────────────
+scikit-learn==1.7.2
+xgboost==3.1.1
+lightgbm==4.6.0
+optuna==4.5.0
+joblib==1.5.2
+scipy==1.16.2
+numpy==2.3.3
+pandas==2.3.3
+shap==0.48.0
+statsmodels==0.14.5
+
+# ── Visualization & Reporting ────────────────────────────────────────────────
+matplotlib==3.10.6
+seaborn==0.13.2
+plotly==6.3.0
+streamlit==1.50.0
+rich==14.1.0
+tqdm==4.67.1
+
+# ── MLOps & Experiment Tracking ──────────────────────────────────────────────
+mlflow==3.4.0
+
+# ── API & Web Framework ──────────────────────────────────────────────────────
+fastapi==0.118.0
+starlette==0.48.0
+uvicorn==0.37.0
+sse-starlette==3.0.2
+
+# ── Config & Utilities ───────────────────────────────────────────────────────
+python-dotenv==1.1.1
+PyYAML==6.0.3
+pydantic==2.11.9
+
+# ── HTTP & System Monitoring ────────────────────────────────────────────────
+requests==2.32.5
+urllib3==2.5.0
+psutil==7.1.0
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+click==8.1.8
+
+# ── Local Package (Editable) ─────────────────────────────────────────────────
+-e .
+
+# ════════════════════════════════════════════════════════════════════════════
+# REMOVED (31 packages):
+#
+# Development/Testing Tools (should use: pip install -e .[dev]):
+#   ruff, pytest, pytest-cov, bandit, pre_commit, coverage, mypy, mypy_extensions
+#   sphinx, sphinx-rtd-theme, sphinx-autodoc-typehints
+#
+# Security/Audit Tools (should use: pip install -e .[dev]):
+#   pip_audit, safety, safety-schemas, cyclonedx-python-lib
+#   license-expression, pip-requirements-parser, pip-api
+#
+# Data Serialization (not imported):
+#   pyarrow, protobuf, orjson, jsonschema, filelock
+#
+# Config Orchestration (use Pydantic instead):
+#   omegaconf, hydra-core
+#
+# Utilities & Misc (not imported):
+#   pydantic-settings, numba, cachetools, cloudpickle, tabulate
+#   certifi, colorlog, colorama, fsspec, sqlalchemy, mlflow-tracing
+#
+# ════════════════════════════════════════════════════════════════════════════

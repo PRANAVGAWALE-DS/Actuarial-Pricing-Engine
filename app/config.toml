@@ -1,0 +1,39 @@
+[theme]
+# Explicitly declare the light palette so Streamlit's component messaging
+# (which reaches st.dataframe / Glide Data Grid) uses these values instead
+# of leaking the raw OS prefers-color-scheme signal into the grid renderer.
+#
+# Values are kept in sync with the :root CSS variables in
+# get_enhanced_theme_css_cached() — light block.
+#
+# The hamburger menu (☰ → Settings → Theme) exposes:
+#   Light            → uses the colours below; data-theme="light" on <html>
+#   Dark             → Streamlit auto-inverts this palette for native widgets;
+#                      data-theme="dark" on <html> triggers our CSS variables
+#                      block in get_enhanced_theme_css_cached() which overrides
+#                      the shell background, sidebar, and all custom elements
+#                      with the explicit dark palette (#0d1117, #1a1f2e, etc.)
+#   Use system setting → follows OS; Streamlit sets data-theme accordingly;
+#                        both native widgets and custom CSS adapt automatically
+#
+# Dark-mode custom element colours are handled by the CSS selector:
+#   [data-theme="dark"]:root, body[data-theme="dark"] { ... }
+# inside get_enhanced_theme_css_cached() in app.py (v3.5.7+).
+#
+# IMPORTANT: get_enhanced_theme_css_cached() is decorated with @st.cache_data.
+# After deploying a new app.py, the CSS is cached on first render and served
+# from memory for the process lifetime.  If dark mode still shows light
+# backgrounds after an upgrade, either:
+#   a) Restart the Streamlit server (clears all @st.cache_data automatically), OR
+#   b) Click "🗑️ Clear Cache" in the Admin Panel (calls st.cache_data.clear())
+#
+# NOTE: config.toml supports a single [theme] section (one base palette).
+# Streamlit auto-inverts this palette for its own native components (inputs,
+# selects, alerts) when dark mode is active.  Custom element dark colours
+# (sidebar background, main area, tables, charts) are controlled entirely by
+# our injected CSS variables and do NOT depend on config.toml dark entries.
+base                     = "light"
+primaryColor             = "#5a67d8"   # --primary (light)
+backgroundColor          = "#e8eef5"   # --bg-app  (light)
+secondaryBackgroundColor = "#dce4f0"   # --bg-app-end (light)
+textColor                = "#1a202c"   # --text-primary (light)

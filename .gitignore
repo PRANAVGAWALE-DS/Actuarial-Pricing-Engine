@@ -1,0 +1,516 @@
+# =====================================================
+# .gitignore for Insurance ML Project
+# Version: 4.2.0
+# Python ML Project with GPU Support
+# =====================================================
+
+# =====================================================
+# Python
+# =====================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.coveragerc
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+docs/_autosummary/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+# FIX [LOW]: removed duplicate global *.ipynb entry that appeared here.
+# The specific notebooks/*.ipynb pattern below is sufficient and intentional.
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+.pdm-python
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+# FIX [D3-P1]: Replaced narrow patterns (.env, .env.local, .env.*.local, *.env)
+# with a single .env.* glob that covers all variants including .env.docker.
+# The old patterns did not match .env.docker (which ends in .docker, not .env),
+# creating a gap where a developer could accidentally commit real secrets from
+# .env.docker (MLFLOW credentials, AWS keys, API_KEY) to git history.
+# !.env.example is preserved — that file is safe to track (no real secrets).
+.env.*
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# =====================================================
+# Machine Learning Specific
+# =====================================================
+# Models
+models/*.pkl
+models/*.joblib
+# FIX [LOW]: duplicate models/*.joblib entry removed (was listed twice).
+models/*.h5
+models/*.pth
+models/*.pt
+models/*.ckpt
+models/*.pb
+models/*.onnx
+models/*.tflite
+models/*.keras
+models/*.json
+# Exception: operational JSON files that the pipeline reads at inference time —
+# these are versioned state, not generated outputs
+!models/bias_correction.json
+!models/drift_baseline.json
+!models/pipeline_metadata.json
+!models/test_indices.json
+models/*.stale
+models/*.ubj
+models/*.db
+models/*.txt
+
+*.model
+
+# Keep model directory structure but ignore contents
+!models/.gitkeep
+!models/README.md
+
+# Preprocessors & Transformers
+preprocessor*.joblib
+scaler*.joblib
+encoder*.joblib
+imputer*.joblib
+transformer*.joblib
+
+# Checkpoints
+checkpoints/
+*.ckpt
+checkpoint/
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow-runs/
+
+# Optuna
+optuna.db
+studies/
+*.db
+*.db-shm
+*.db-wal
+
+# TensorBoard
+runs/
+events.out.tfevents.*
+
+# Weights & Biases
+wandb/
+
+# DVC
+.dvc/
+.dvc/cache/
+.dvc/tmp/
+
+# =====================================================
+# Data Files
+# =====================================================
+# Raw data
+data/raw/*.csv
+data/raw/*.xlsx
+data/raw/*.json
+data/raw/*.parquet
+data/raw/*.feather
+data/raw/*.pkl
+
+# Processed data
+data/processed/*.csv
+data/processed/*.pkl
+data/processed/*.parquet
+data/processed/*.feather
+
+# External data
+data/external/
+
+# Interim data
+data/interim/
+
+# Sample data — used by CI regression gate (scripts/ci_model_gate.py).
+# data/sample/ itself is ignored so future large files don't slip in, but
+# the two synthetic CSVs required by ci_model_gate.py are explicitly
+# un-ignored.  These files contain no real customer data (public UCI
+# insurance dataset splits, seed=42).
+data/sample/
+# M3 FIX: un-ignore the specific CI gate sample files.
+# Without these the CI model regression gate raises FileNotFoundError and
+# the Stage 4 gate always fails on a clean checkout.
+!data/sample/train_sample.csv
+!data/sample/test_sample.csv
+
+# Keep data directory structure
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/external/.gitkeep
+!data/interim/.gitkeep
+!data/sample/.gitkeep
+
+# Large files
+*.hdf5
+*.h5
+*.hdf
+*.sqlite
+*.db
+
+# =====================================================
+# Logs & Reports
+# =====================================================
+logs/
+*.log
+log/
+*.log.*
+
+# Reports — generated outputs (blanket; scaffold files preserved via negations)
+reports/
+!reports/.gitkeep
+!reports/README.md
+
+# =====================================================
+# Notebooks & Experiments
+# =====================================================
+# FIX [LOW]: global *.ipynb pattern removed from Python section above.
+# This targeted pattern is the single canonical rule for notebook ignoring.
+notebooks/*.ipynb
+experiments/
+scratch/
+temp/
+tmp/
+
+# Keep notebook directory
+!notebooks/.gitkeep
+!notebooks/README.md
+!notebooks/example.ipynb
+
+# =====================================================
+# IDEs & Editors
+# =====================================================
+# VSCode
+.vscode/settings.json
+*.code-workspace
+.history/
+
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# =====================================================
+# Operating Systems
+# =====================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =====================================================
+# GPU & CUDA
+# =====================================================
+# CUDA cache
+.cuda/
+*.cubin
+*.fatbin
+*.ptx
+
+# PyTorch
+.torch/
+
+# =====================================================
+# Cloud & Deployment
+# =====================================================
+# FIX [LOW]: .dockerignore removed from this block.
+# .dockerignore is a tracked project infrastructure file (like .gitignore
+# itself). It was incorrectly ignored, meaning contributors who ran
+# `git add -A` after a fresh checkout could not add it.
+# Run: git rm --cached .dockerignore  (if it was previously tracked as ignored)
+docker-compose.override.yml
+# H2 FIX: MLflow basic-auth credentials — never commit real passwords.
+# Copy docker/mlflow_basic_auth.ini.example → docker/mlflow_basic_auth.ini and set values.
+docker/mlflow_basic_auth.ini
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# AWS
+.aws/
+
+# Azure
+.azure/
+
+# GCP
+.gcp/
+*.json.credentials
+
+# =====================================================
+# CI/CD
+# =====================================================
+.github/workflows/*.yml.bak
+.gitlab-ci.yml.bak
+
+# =====================================================
+# Project-Specific
+# =====================================================
+# Predictions
+predictions/
+predictions.csv
+output/
+results/
+
+# Artifacts
+artifacts/
+
+# Cache
+.cache/
+*.cache
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.bak_next_level
+
+# Project utility / session output files
+output*.txt
+# NOTE [LOW]: project_structure.txt is listed here but may already be tracked
+# in git (visible in the working tree). If so, run:
+#   git rm --cached project_structure.txt
+# to stop tracking it without deleting the local file.
+project_structure.txt
+
+# Profiling
+*.prof
+*.lprof
+profile_*.txt
+
+# Security
+secrets/
+credentials/
+*.key
+*.pem
+*.crt
+*.p12
+*.keystore
+
+# =====================================================
+# Development
+# =====================================================
+# Local configuration
+config.local.yaml
+config.local.yml
+local_config.py
+
+# Test outputs
+test_output/
+test_results/
+
+# Benchmark results
+benchmarks/
+
+# Documentation builds
+docs/build/
+docs/dist/
+
+# =====================================================
+# Keep Important Files
+# =====================================================
+# Keep these files even if they match ignore patterns
+!.gitkeep
+!.gitattributes
+!.editorconfig
+!.pre-commit-config.yaml
+!pyproject.toml
+!requirements.txt
+!README.md
+!LICENSE
+!CHANGELOG.md
+!.env.example
+
+# =====================================================
+# Notes
+# =====================================================
+# To track a file that's ignored:
+#   git add -f <file>
+#
+# To see what's being ignored:
+#   git status --ignored
+#
+# To check if a file is ignored:
+#   git check-ignore -v <file>
+# =====================================================
+
+# Temp dir used by make clean-models
+.model_json_bak/
+# Plain .env (no extension suffix)
+.env

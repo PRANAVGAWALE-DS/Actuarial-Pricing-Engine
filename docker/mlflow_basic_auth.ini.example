@@ -1,0 +1,49 @@
+# =============================================================================
+# FILE     : docker/mlflow_basic_auth.ini.example
+# PROJECT  : Improved_ML_Insurance
+#
+# MLflow basic-auth plugin configuration template.
+#
+# SETUP
+# ─────
+# 1. Copy this file: cp docker/mlflow_basic_auth.ini.example docker/mlflow_basic_auth.ini
+# 2. Set admin_username and admin_password to real values.
+# 3. Ensure docker/mlflow_basic_auth.ini is gitignored (already in .gitignore).
+# 4. The docker-compose.yml mlflow service mounts this file read-only and
+#    passes MLFLOW_AUTH_CONFIG_PATH=/etc/mlflow/basic_auth.ini.
+#
+# HOW IT WORKS
+# ────────────
+# MLflow 3.x ships a built-in basic-auth plugin activated via
+#   mlflow server --app-name basic-auth
+# The plugin stores users in a separate SQLite database (auth_db_uri below).
+# On first start the admin user defined here is auto-created.
+# All subsequent user/permission management is via the MLflow REST auth API
+# or the UI under /mlflow/ajax-api/2.0/mlflow/users.
+#
+# API/STREAMLIT ACCESS
+# ─────────────────────
+# Set MLFLOW_TRACKING_USERNAME and MLFLOW_TRACKING_PASSWORD in .env.docker
+# for the api and streamlit services so they can authenticate to the tracking
+# server. These env vars are read automatically by the MLflow Python client.
+#
+# REFERENCE
+# ─────────
+# https://mlflow.org/docs/latest/auth/index.html
+# =============================================================================
+
+[mlflow]
+# Permissions for users not explicitly granted access.
+# NO_PERMISSIONS = unauthenticated callers cannot read or write.
+# Acceptable values: READ, EDIT, MANAGE, NO_PERMISSIONS
+default_permission = NO_PERMISSIONS
+
+# Separate SQLite database for user/permission records.
+# Lives alongside the experiment-tracking database for consistency.
+database_uri = sqlite:////app/data/databases/mlflow_auth.db
+
+# Initial admin credentials — CHANGE BEFORE DEPLOYMENT.
+# These are written to the auth database on first startup.
+# Update via the MLflow auth API after first start if needed.
+admin_username = mlflow_admin
+admin_password = CHANGE_ME_BEFORE_DEPLOYMENT

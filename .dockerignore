@@ -1,0 +1,91 @@
+# =============================================================================
+# FILE     : Pipeline/.dockerignore
+# PROJECT  : Improved_ML_Insurance
+#
+# Must live at Pipeline/ (the build context root).
+# Excludes files from the Docker build context sent to the daemon.
+# Smaller context = faster `docker compose up --build`.
+#
+# KEY RULE: models/, data/, logs/, mlruns/ are BIND-MOUNTED at runtime
+# (see docker-compose.yml volumes). They must NOT be baked into the image —
+# models alone can be several hundred MB.
+# =============================================================================
+
+# ── Virtual environment ───────────────────────────────────────────────────────
+# The host venv lives at Improved_ML_Insurance/venv/ (outside Pipeline/),
+# but guard against any local venv created inside Pipeline/ too.
+venv/
+.venv/
+env/
+.env/
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Large runtime artefacts (bind-mounted, not baked in) ─────────────────────
+models/
+mlruns/
+studies/
+logs/
+data/raw/
+data/processed/
+data/databases/
+
+# FIX [MEDIUM]: data/sample/ was missing, causing sample CSVs to be baked
+# into every Docker image. If sample data contains real customer data (even
+# a subset) this is a data governance violation. Excluded regardless.
+data/sample/
+
+# ── Notebooks ─────────────────────────────────────────────────────────────────
+notebooks/
+
+# ── Reports & visualisations ──────────────────────────────────────────────────
+reports/
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+# FIX [MEDIUM]: cache/ was missing — intermediate files accumulated over
+# time would unnecessarily bloat the build context.
+cache/
+
+# ── Experiments ───────────────────────────────────────────────────────────────
+# FIX [MEDIUM]: experiments/ was missing. Experiment result JSONs and run
+# artifacts do not belong in the production image.
+experiments/
+
+# ── Secrets — never bake .env files into images ───────────────────────────────
+.env
+.env.*
+!.env.example          # safe to include — no real secrets
+
+# ── Build / dist artefacts ────────────────────────────────────────────────────
+*.egg-info/
+dist/
+build/
+
+# ── Version control ───────────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+.dvcignore
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak*
+*.backup
+profile.stats
+output_backtest.txt
+Pipeline/             # guard against nested self-reference

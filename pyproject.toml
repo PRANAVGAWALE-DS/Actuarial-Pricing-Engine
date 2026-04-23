@@ -1,0 +1,499 @@
+# =====================================================
+# Insurance ML Pipeline - Project Configuration
+# Version: 4.2.0 (Cleaned)
+# Python: 3.11+ | GPU: CUDA 12.4 | Windows 11
+#
+# CHANGES FROM 4.1.0:
+# - Removed 26 unused packages from dependencies
+# - Removed mlflow-tracing (not imported)
+# - Removed hydra-core, omegaconf (use Pydantic for config)
+# - Removed async extra (Celery/asyncssh not used)
+# - Removed pydeck from dashboard extra (not imported)
+# - Cleaned up pyarrow, protobuf, orjson, jsonschema, filelock
+# - Removed cachetools, cloudpickle, certifi, colorlog, colorama
+# - Removed tabulate, fsspec, numba, pydantic-settings, sqlalchemy
+# - Total savings: ~30 MB, 26 unused packages removed
+#
+# AUDIT FIXES (4.2.0 → 4.2.1):
+# - FIX [HIGH]:  Removed broken CLI entry point insurance-train.
+#     scripts.train_model:main was registered as a console_scripts entry point
+#     but [tool.setuptools.packages.find] explicitly excludes "scripts*".
+#     A wheel/sdist install would expose a command that imports a module it
+#     did not ship. Invoke training directly:
+#       python scripts/train_model.py [args]
+#     To restore the entry point properly, move the main() function to a
+#     module inside src/insurance_ml/ (e.g. src/insurance_ml/cli.py) and
+#     register: insurance-train = "insurance_ml.cli:main"
+# - FIX [MEDIUM]: Removed invalid package-data globs configs/*.yaml and
+#     data/*.csv. These paths do not exist under src/insurance_ml/ — the
+#     directories live at the project root. Moving them to
+#     src/insurance_ml/configs/ and src/insurance_ml/data/ is required to
+#     ship them inside the built wheel.
+# - FIX [D8-P2] / FIX F-03: Corrected coverage fail_under comment chain.
+#     The actual enforced value is 30 (see [tool.coverage.report] below).
+#     All comment references now agree: ci.yml, this changelog, and the gate.
+# - FIX [LOW]:   Added tensorboard to [dev] extras to match Makefile target.
+# =====================================================
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# =====================================================
+# Project Metadata
+# =====================================================
+[project]
+name = "insurance-ml"
+version = "4.2.0"
+description = "GPU-Optimized Medical Insurance Cost Prediction ML Pipeline with MLOps"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "PG"}
+]
+maintainers = [
+    {name = "ML Engineering Team"}
+]
+keywords = [
+    "machine-learning",
+    "mlops",
+    "insurance",
+    "prediction",
+    "xgboost",
+    "lightgbm",
+    "gpu-acceleration",
+    "optuna",
+    "mlflow",
+    "streamlit",
+    "fastapi"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# =====================================================
+# Core Dependencies (Production) - CLEANED
+# =====================================================
+dependencies = [
+    # Data Processing & Analysis
+    "pandas==2.3.3",
+    "numpy==2.3.3",
+    "scipy==1.16.2",
+
+    # Machine Learning - Core
+    "scikit-learn==1.7.2",
+    "xgboost==3.1.1",
+    "lightgbm==4.6.0",
+    "joblib==1.5.2",
+    "statsmodels==0.14.5",
+    "optuna==4.5.0",
+
+    # Visualization & Reporting
+    "matplotlib==3.10.6",
+    "seaborn==0.13.2",
+    "plotly==6.3.0",
+    "shap==0.48.0",
+
+    # MLOps & Experiment Tracking
+    "mlflow==3.4.0",
+
+    # Configuration Management
+    "pyyaml==6.0.3",
+    "python-dotenv==1.1.1",
+    "pydantic==2.11.9",
+
+    # Utilities
+    "rich==14.1.0",
+    "tqdm==4.67.1",
+    "psutil==7.1.0",
+    "requests==2.32.5",
+    "urllib3==2.5.0",
+
+    # CLI
+    "click==8.1.8",
+]
+
+# =====================================================
+# Optional Dependencies - Feature Groups
+# =====================================================
+[project.optional-dependencies]
+
+# GPU Support (PyTorch with CUDA 12.4)
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU (PyTorch) — CANNOT be installed via this extra.
+# pip extras do not support index-url, so `pip install -e .[gpu]` would
+# silently install the CPU build from PyPI.
+#
+# Install GPU PyTorch separately:
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+#               --index-url https://download.pytorch.org/whl/cu124
+#
+# Or use: make install-gpu
+gpu = []
+
+# Web Framework & API
+api = [
+    "fastapi==0.118.0",
+    "uvicorn==0.37.0",
+    "starlette==0.48.0",
+    "sse-starlette==3.0.2",
+]
+
+# Interactive Dashboard
+dashboard = [
+    "streamlit==1.50.0",
+]
+
+# Development Tools
+dev = [
+    # Code Formatting & Linting
+    "ruff==0.8.0",
+    "mypy==1.18.2",
+    "mypy-extensions==1.1.0",
+
+    # Testing
+    "pytest==8.4.2",
+    "pytest-cov==6.1.0",
+    "coverage==7.10.7",
+
+    # Security & Quality
+    "bandit==1.8.6",
+    "pre-commit==4.3.0",
+    "pip-audit==2.9.0",
+    "safety==3.6.2",
+
+    # Dependency Management
+    "pip-requirements-parser==32.0.1",
+    "pip-api==0.0.34",
+    "cyclonedx-python-lib==9.1.0",
+    "license-expression==30.4.4",
+
+    # Documentation
+    "sphinx>=8.0.0",
+    "sphinx-rtd-theme>=3.0.0",
+    "sphinx-autodoc-typehints>=2.0.0",
+
+    # Hyperparameter Tuning Visualization
+    "optuna-dashboard==0.20.0",
+
+    # Profiling & Monitoring (training/dev workflows)
+    # FIX [LOW]: added tensorboard — referenced by 'make tensorboard' target but
+    # was absent from all requirements files, causing the target to always fail.
+    "tensorboard>=2.15.0",
+]
+
+# All optional dependencies
+all = [
+    "insurance-ml[gpu,api,dashboard,dev]",
+]
+
+# Minimal installation (core ML only)
+minimal = []
+
+# =====================================================
+# Project URLs
+# =====================================================
+[project.urls]
+Homepage = "https://github.com/yourusername/insurance-ml"
+Documentation = "https://insurance-ml.readthedocs.io"
+Repository = "https://github.com/yourusername/insurance-ml"
+Issues = "https://github.com/yourusername/insurance-ml/issues"
+Changelog = "https://github.com/yourusername/insurance-ml/blob/main/CHANGELOG.md"
+
+# =====================================================
+# Entry Points - CLI Commands
+# =====================================================
+# FIX [HIGH]: insurance-train = "scripts.train_model:main" was removed.
+#
+# Root cause: [tool.setuptools.packages.find] exclude = ["scripts*"] means
+# the scripts/ package is never installed into a wheel or sdist. Any user
+# running `insurance-train` after `pip install insurance-ml` would get:
+#   ImportError: No module named 'scripts'
+#
+# To restore: move train_model.main() to src/insurance_ml/cli.py and add:
+#   [project.scripts]
+#   insurance-train = "insurance_ml.cli:main"
+#
+# Direct invocation still works:
+#   python scripts/train_model.py [args]
+#   make train
+
+# =====================================================
+# Package Discovery
+# =====================================================
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["insurance_ml*"]
+exclude = ["tests*", "scripts*"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.package-data]
+insurance_ml = [
+    # py.typed marker — required for PEP 561 type-checking support
+    "py.typed",
+    # FIX [MEDIUM]: configs/*.yaml and data/*.csv removed.
+    # These paths do not exist under src/insurance_ml/ — both directories
+    # live at the project root. Package-data globs are resolved relative to
+    # the installed package root (src/insurance_ml/), so these globs silently
+    # matched nothing in the built wheel.
+    #
+    # To ship config/data with the package:
+    #   1. Move configs/ → src/insurance_ml/configs/
+    #   2. Move data/   → src/insurance_ml/data/
+    #   3. Update all path references in config.py / data.py accordingly
+    #   4. Uncomment:
+    # "configs/*.yaml",
+    # "data/*.csv",
+]
+
+# =====================================================
+# pytest - Testing Configuration
+# =====================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+addopts = [
+    "-v",
+    "-p no:anyio",
+    "-p no:hydra_pytest",
+    "--strict-markers",
+    "--capture=sys",
+    "--cov=insurance_ml",
+    "--cov-report=html",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=xml",
+    "--tb=short",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow running tests",
+    "gpu: Tests requiring GPU",
+    "api: API endpoint tests",
+    "model: Model training/prediction tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ResourceWarning",
+]
+
+# =====================================================
+# mypy - Type Checking
+# =====================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+ignore_missing_imports = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+pretty = true
+show_error_codes = true
+show_error_context = true
+show_column_numbers = true
+
+[[tool.mypy.overrides]]
+module = [
+    "sklearn.*",
+    "xgboost.*",
+    "lightgbm.*",
+    "optuna.*",
+    "mlflow.*",
+    "streamlit.*",
+]
+ignore_missing_imports = true
+
+# =====================================================
+# coverage - Test Coverage
+# =====================================================
+[tool.coverage.run]
+source = ["insurance_ml"]
+disable_warnings = [
+    # Tests import insurance_ml modules during collection, before pytest-cov
+    # starts measuring. Suppress the resulting package-level warning so the
+    # global pytest warning-as-error policy does not abort an otherwise
+    # successful run at coverage finalization time.
+    "module-not-measured",
+]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__init__.py",
+    "setup.py",
+    "*/venv/*",
+    "*/.venv/*",
+    "*/mlruns/*",
+    "*/models/*",
+    # Legacy orchestration / tuning modules are not meaningfully unit-tested yet.
+    # Keep them out of the coverage denominator until they are split into
+    # smaller testable units or covered by dedicated integration coverage jobs.
+    # The artifact-heavy runtime modules below are still exercised mostly
+    # through integration-style tests and mocked happy-path slices. Keep them
+    # out of the line-coverage denominator until they have dedicated end-to-end
+    # coverage jobs that execute the full model-loading/inference surfaces.
+    "*/src/insurance_ml/train.py",
+    "*/src/insurance_ml/optuna_optimizer.py",
+    "*/src/insurance_ml/diagnostics.py",
+    "*/src/insurance_ml/utils.py",
+    "*/src/insurance_ml/models.py",
+    "*/src/insurance_ml/predict.py",
+]
+branch = true
+parallel = false
+
+[tool.coverage.report]
+precision = 2
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+show_missing = true
+skip_covered = false
+# FIX [D8-P2]: Three-way inconsistency resolved. The actual enforced gate is
+# fail_under = 30, applied by pytest-cov reading this section. The previous
+# state had three conflicting claims:
+#   ci.yml comments (3 locations): "--cov-fail-under=70"
+#   pyproject.toml changelog comment (line 33): "Raised from 0 to 40"
+#   this value: 30
+# ci.yml comments corrected to reflect the actual 30% gate.
+# Changelog comment on line 33 is stale — it described an intermediate
+# intention that was not carried through to this value.
+# Raise fail_under here (not in ci.yml addopts) as coverage grows; the current
+# large orchestration/runtime modules listed in [tool.coverage.run].omit are excluded from
+# the denominator via [tool.coverage.run] omit above until they have
+# dedicated integration test coverage.
+fail_under = 30
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# =====================================================
+# bandit - Security Linting
+# =====================================================
+[tool.bandit]
+exclude_dirs = [
+    "/tests/",
+    "/venv/",
+    "/.venv/",
+    "/build/",
+    "/dist/"
+]
+skips = [
+    "B101",  # assert_used
+    "B601",  # paramiko_calls
+]
+
+# =====================================================
+# Ruff - Lint + Format + Import Sort
+# =====================================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "__pycache__",
+    "*.egg-info",
+    "mlruns",
+    "models",
+    "logs",
+    "htmlcov",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long — ruff format handles wrapping
+    "B008",  # function calls in argument defaults (common in FastAPI Depends)
+    "C901",  # too complex — not enforced
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["insurance_ml"]
+known-third-party = [
+    "pandas", "numpy", "sklearn", "xgboost",
+    "lightgbm", "optuna", "mlflow", "torch",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # imported but unused — re-exports are intentional
+
+[tool.ruff.format]
+# black-compatible output — drop-in replacement
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# =====================================================
+# Installation Instructions
+# =====================================================
+#
+# Basic Installation (CPU only):
+#   pip install -e .
+#
+# With GPU support (CUDA 12.4) — NOTE: must use --index-url, not --extra-index-url:
+#   pip install -e .[api,dashboard,dev]
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+#               --index-url https://download.pytorch.org/whl/cu124
+#
+# Full development setup (CPU torch — GPU users see above):
+#   pip install -e .[all]
+#
+# Specific feature groups:
+#   pip install -e .[api,dashboard]
+#   pip install -e .[dev]
+#
+# Production minimal:
+#   pip install -e .[minimal]
+#
+# =====================================================

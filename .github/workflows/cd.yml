@@ -1,0 +1,233 @@
+# ============================================================
+# CD — Insurance Pricing ML Pipeline
+# Triggers ONLY on merge to main (not on every push/PR).
+#
+# Confirmed from source files:
+#   Health endpoint : GET /health  (routes.py line 1)
+#   API port        : 8000         (config.yaml → api.port, Dockerfile EXPOSE)
+#   Dockerfile path : docker/Dockerfile
+#   Build context   : repo root (Pipeline/) — all COPY paths in Dockerfile
+#                     are relative to Pipeline/ per Dockerfile header.
+#
+# Image is built, smoke-tested, then published to GHCR.
+# Push is blocked unless the /health smoke test passes — this
+# prevents a broken image from ever reaching the registry.
+#
+# SMOKE TEST SCOPE
+# ────────────────
+# The smoke test asserts HTTP 200 from /health (image availability gate).
+# It does NOT assert status=healthy in the JSON body because the smoke
+# container is started without model volume mounts — models/ is empty,
+# so app.state.pipeline is None and /health intentionally returns
+# {"status":"unhealthy"} with HTTP 200 (routes.py health_check behavior).
+#
+# The status=healthy assertion requires model artifacts and belongs in an
+# integration test that runs with docker-compose volumes mounted:
+#   make smoke-test  (runs compose up with real volumes)
+#
+# FIX [D1-P0]: Removed "Assert /health body reports status=healthy" step.
+# That step always failed in CI because no -v volume mounts were provided,
+# meaning models/ was empty and /health always returned status=unhealthy.
+# The CD pipeline could never push an image in its previous form.
+#
+# ACTIONS PIN POLICY
+# ──────────────────
+# FIX [D8-P1]: All actions pinned to full commit SHAs. Mutable version tags
+# (e.g. @v4) can be silently updated by an upstream attacker to point to
+# malicious code that runs with secrets.GITHUB_TOKEN access.
+#
+# To update: gh release view --repo <action_repo> --json tagName,targetCommitish
+# Dependabot (.github/dependabot.yml) will open PRs when new versions are
+# available with correct SHAs. See .github/dependabot.yml.
+#
+# SHA table (verify with gh before upgrading):
+#   actions/checkout@v4.2.2         : 11bd71901bbe5b1630ceea73d27597364c9af683
+#   docker/setup-buildx-action@v3.8.0: f95db51fddba0c2d1ec667646a06c2ce06100226
+#   docker/login-action@v3.3.0      : 9780b0c442fbb1117ed29e0efdff1e18412f7567
+#   docker/metadata-action@v5.6.1   : 369eb591f429131d6889c46b94e711f089e6ca96
+#   docker/build-push-action@v5.4.0 : 4f58ea79222b3b9dc2c8bbdd6debcef730109a75
+# ============================================================
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+  # Allow re-triggering a deploy without a code push
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: "3.11"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-publish:
+    name: Build → Smoke Test → Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226  # v3.8.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------
+      # Tags produced:
+      #   ghcr.io/owner/repo:latest   (on main only)
+      #   ghcr.io/owner/repo:sha-<7>  (pinned for rollback)
+      #   ghcr.io/owner/repo:main     (branch label)
+      # ------------------------------------------------
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=ref,event=branch
+
+      # ------------------------------------------------
+      # Build the prod target only (not dev).
+      # Dockerfile stages: base-runtime → base-build → builder → prod → dev
+      # Context = repo root (Pipeline/) — confirmed by Dockerfile header.
+      # ------------------------------------------------
+      - name: Build Docker image (no push — for smoke test)
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: prod
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ------------------------------------------------
+      # Smoke test: start the prod container and verify
+      # GET /health returns HTTP 200.
+      #
+      # WHAT THIS TESTS
+      # ───────────────
+      # HTTP 200 confirms:
+      #   - Image starts without a crash (process exits, entrypoint errors)
+      #   - FastAPI app module loads without ImportError
+      #   - Uvicorn binds to port 8000
+      #   - /health route is registered and reachable
+      #   - Startup error handling works (catches FileNotFoundError for missing
+      #     models and sets startup_error; API continues serving)
+      #
+      # WHAT THIS DOES NOT TEST
+      # ───────────────────────
+      # status=healthy in the JSON body — that requires model volume mounts
+      # which are not available in this container-only smoke test.
+      # Run `make smoke-test` (docker-compose with real volumes) for the full
+      # integration health check.
+      #
+      # Port 8000 confirmed: config.yaml api.port=8000, Dockerfile EXPOSE 8000
+      # ------------------------------------------------
+      - name: Prepare env file for container
+        run: cp .env.example .env.docker
+
+      - name: Start container for smoke test
+        run: |
+          docker run -d \
+            --name insurance-api-smoke \
+            --env-file .env.docker \
+            -e CUDA_VISIBLE_DEVICES="" \
+            -e STRICT_AUTH="false" \
+            -p 8000:8000 \
+            ghcr.io/${{ github.repository }}:latest
+
+      - name: Wait for API to be ready (max 45s)
+        run: |
+          echo "Waiting for API on port 8000..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "API responded after attempt $i"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "API did not respond within 45 seconds"
+              docker logs insurance-api-smoke
+              exit 1
+            fi
+            sleep 3
+          done
+
+      # FIX [D1-P0]: Assert HTTP 200 only — image availability gate.
+      # The previous step ("Assert /health body reports status=healthy") was
+      # removed because status=healthy requires model artifacts loaded from
+      # volume-mounted models/. Without volumes, pipeline is None and the
+      # body always contains status=unhealthy even when the image is correct.
+      # This step validates the image starts and the API is reachable.
+      - name: Assert /health returns HTTP 200 (image availability gate)
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "SMOKE TEST FAILED: /health returned HTTP $HTTP_STATUS"
+            docker logs insurance-api-smoke
+            exit 1
+          fi
+          echo "HTTP status: $HTTP_STATUS ✅"
+          echo ""
+          echo "Note: status=healthy requires model volume mounts."
+          echo "Run 'make smoke-test' for the full integration health check."
+
+      - name: Print health response body (informational)
+        run: |
+          BODY=$(curl -s http://localhost:8000/health)
+          echo "Health response: $BODY"
+          # Log the startup_error field if present — useful for diagnosing
+          # model-load failures without failing the smoke test.
+          STATUS=$(echo "$BODY" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" \
+            2>/dev/null || echo "parse-error")
+          echo "Service status: $STATUS (expected 'unhealthy' without model volumes)"
+
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker logs insurance-api-smoke || true
+
+      - name: Stop and remove test container
+        if: always()
+        run: docker rm -f insurance-api-smoke || true
+
+      # ------------------------------------------------
+      # Push only after smoke test passes.
+      # Uses the same layer cache so this is fast.
+      # ------------------------------------------------
+      - name: Push image to GHCR
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: prod
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Print published image tags
+        run: |
+          echo "### Published Image" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Pull: \`docker pull ghcr.io/${{ github.repository }}:latest\`" >> $GITHUB_STEP_SUMMARY

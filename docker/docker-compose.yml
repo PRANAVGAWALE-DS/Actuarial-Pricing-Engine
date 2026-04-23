@@ -1,0 +1,308 @@
+# =============================================================================
+# FILE     : Pipeline/docker/docker-compose.yml
+# PROJECT  : Improved_ML_Insurance
+#
+# SERVICES
+# ────────
+#   mlflow     MLflow tracking server      → http://localhost:5000
+#   optuna     Optuna dashboard            → http://localhost:8080
+#   api        FastAPI + GPU               → http://localhost:8000
+#                Swagger UI               → http://localhost:8000/docs
+#   streamlit  Interactive dashboard       → http://localhost:8501
+#
+# PATH NOTES
+# ──────────
+# This file lives at Pipeline/docker/docker-compose.yml.
+# Docker Compose resolves ALL relative paths (volumes, env_file, build context)
+# relative to THIS file's location — i.e. Pipeline/docker/.
+# Therefore every host path uses ../ to step up to Pipeline/.
+#
+# USAGE (run from Pipeline/)
+# ──────────────────────────
+#   docker compose -f docker/docker-compose.yml up --build
+#   docker compose -f docker/docker-compose.yml up --build api
+#   docker compose -f docker/docker-compose.yml logs -f api
+#   docker compose -f docker/docker-compose.yml ps
+#   docker compose -f docker/docker-compose.yml down
+# =============================================================================
+
+name: insurance-ml
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# YAML ANCHORS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# GPU reservation — api only. Streamlit, MLflow, Optuna are CPU-only.
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+# Build spec for api and streamlit.
+# context: ..            → Pipeline/  (one level above this file)
+# dockerfile: docker/Dockerfile → Pipeline/docker/Dockerfile (relative to context)
+x-build: &build
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+    target: prod          # change to `dev` for hot-reload + dev tools
+
+# Shared bind mounts.
+# Host paths use ../ because they are resolved from Pipeline/docker/.
+# ../ steps up to Pipeline/ where models/, data/, etc. actually live.
+x-mounts: &mounts
+  - ../models:/app/models          # joblib artefacts + optuna_studies.db
+  - ../data:/app/data              # insurance.csv, processed splits, mlflow.db
+  - ../logs:/app/logs              # runtime log files
+  - ../mlruns:/app/mlruns          # MLflow artifact store
+  - ../configs:/app/configs        # config.yaml — editable without rebuild
+  - ../studies:/app/studies        # Optuna SQLite fallback path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+# ─────────────────────────────────────────────────────────────────────────────
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # MLflow Tracking Server
+  #
+  # FIX [D1-P1]: Replaced image: python:3.11-slim + inline pip install with a
+  # pre-built image via docker/mlflow.Dockerfile. The old approach ran
+  # pip install mlflow==3.4.0 on every container start (~25-40s), blocked
+  # dependent services, and could fail silently on PyPI outages.
+  # The pre-built image bakes the dependency at build time; cold start is now
+  # under 2 seconds with zero network I/O at runtime.
+  #
+  # Backend store : data/databases/mlflow.db  (SQLite — already in your project)
+  # Artifact root : mlruns/                   (bind-mounted from Pipeline/)
+  # URL           : http://localhost:5000
+  # ───────────────────────────────────────────────────────────────────────────
+  mlflow:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: mlflow
+    container_name: insurance-mlflow
+    # H2 FIX: enable MLflow built-in basic-auth plugin.
+    # The Dockerfile CMD is overridden here so the image remains unchanged.
+    # Requires docker/mlflow_basic_auth.ini (copy from .example and set creds).
+    command: >
+      mlflow server
+        --backend-store-uri file:////app/mlruns
+        --default-artifact-root /app/mlruns
+        --host 0.0.0.0
+        --port 5000
+        --workers 1
+        --app-name basic-auth
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../data/databases:/app/data/databases
+      - ../mlruns:/app/mlruns
+      # Read-only auth config — create from docker/mlflow_basic_auth.ini.example
+      - ../docker/mlflow_basic_auth.ini:/etc/mlflow/basic_auth.ini:ro
+    environment:
+      MLFLOW_AUTH_CONFIG_PATH: /etc/mlflow/basic_auth.ini
+      MLFLOW_FLASK_SERVER_SECRET_KEY: "insurance-ml-secret-2026"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - insurance_net
+
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Optuna Dashboard
+  #
+  # FIX [D1-P1 + D2-P2]: Replaced image: python:3.11-slim + inline pip install
+  # with a pre-built image via docker/optuna.Dockerfile. Two fixes bundled:
+  #   1. pip-on-start eliminated (same rationale as mlflow above).
+  #   2. optuna-dashboard version corrected from 0.17.0 → 0.20.0 to match
+  #      pyproject.toml [dev] extras. The version gap caused schema warnings
+  #      against optuna==4.5.0.
+  #
+  # DB path : models/optuna_studies.db
+  # URL     : http://localhost:8080
+  # ───────────────────────────────────────────────────────────────────────────
+  optuna:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: optuna
+    container_name: insurance-optuna
+    ports:
+      - "8088:8080"
+    volumes:
+      - ../models:/app/models     # optuna_studies.db lives here
+      # L2 FIX: removed dead ../studies mount. The dashboard CMD points to
+      # sqlite:////app/models/optuna_studies.db — the studies/ path is never
+      # read. Add it back here only if you relocate the DB.
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - insurance_net
+
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # FastAPI — ML prediction service
+  #
+  # GPU : RTX 3050 4GB via NVIDIA Container Toolkit (WSL2 passthrough).
+  #       Only this service gets the GPU — Streamlit/MLflow/Optuna do not.
+  #
+  # Workers = 1 : multiple workers would fork the process and each fork
+  #   would load all joblib models (~16 models × ~50–200MB) into RAM.
+  #   On 16GB with all services running, keep workers=1.
+  #   ADDITIONAL CONSTRAINT: MLflow backend is SQLite which has no concurrent
+  #   write safety. workers=1 is required until the backend is migrated to
+  #   PostgreSQL.
+  #
+  # Auth : STRICT_AUTH=true enforces bearer-token authentication on all
+  #   prediction endpoints even when API_KEY is unset (returns 503 instead of
+  #   allowing open access). Set API_KEY in .env.docker before deployment.
+  #   See api/routes.py verify_api_key() for the full auth logic.
+  #
+  # Endpoint  : http://localhost:8000
+  # Swagger   : http://localhost:8000/docs
+  # Health    : http://localhost:8000/health
+  # ───────────────────────────────────────────────────────────────────────────
+  api:
+    <<: [*build, *gpu]
+    container_name: insurance-api
+    command: >
+      uvicorn api.main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers 1
+        --log-level info
+        --no-access-log
+    ports:
+      - "8000:8000"
+    volumes: *mounts
+    env_file:
+      - ../.env.docker            # Pipeline/.env.docker — must contain API_KEY
+    environment:
+      # ── Must override config.yaml values for Docker ──────────────────────
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+      API_WORKERS: "1"
+      API_RELOAD: "false"
+      # Allow browser-facing Streamlit AND Docker-internal service name
+      CORS_ORIGINS: "http://localhost:8501,http://127.0.0.1:8501,http://streamlit:8501"
+      MODEL_PATH: "models/"
+      # Point to the MLflow server container (not file-based ./mlruns)
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      # H2 FIX: credentials for MLflow basic-auth.  Set in .env.docker.
+      MLFLOW_TRACKING_USERNAME: "${MLFLOW_ADMIN_USERNAME}"
+      MLFLOW_TRACKING_PASSWORD: "${MLFLOW_ADMIN_PASSWORD}"
+      # Consistent Optuna path matching actual file location
+      OPTUNA_STORAGE: "sqlite:///models/optuna_studies.db"
+      LOG_FILE: "logs/api.log"
+      # FIX [D3-P1]: STRICT_AUTH=true enforces fail-secure auth mode.
+      # When set, an unset or incorrect API_KEY returns HTTP 503 rather than
+      # allowing unauthenticated access. API_KEY must be set in .env.docker.
+      STRICT_AUTH: "true"
+      # Runtime timezone — set here, not baked into the image.
+      TZ: "Asia/Kolkata"
+    healthcheck:
+      # start_period=90s: API loads ~16 joblib models at startup.
+      # Docker won't count failed health checks during this window.
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - insurance_net
+
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Streamlit — interactive prediction dashboard
+  #
+  # No GPU needed — Streamlit only calls the API over HTTP.
+  # Startup order: waits for api to pass /health before booting, so the
+  # "API unavailable" banner never appears on first page load.
+  #
+  # FIX [D3-P1]: --server.enableXsrfProtection=false removed. This flag
+  # disabled Streamlit's built-in XSRF token validation on form submissions,
+  # allowing any page that can reach localhost:8501 to submit forms on behalf
+  # of authenticated users. XSRF protection is enabled by default in Streamlit
+  # and causes no issues in normal single-origin Docker usage.
+  # --server.enableCORS=false is kept; it is correct for Docker-internal
+  # networks where the browser and the Streamlit server share the same origin.
+  #
+  # SIZE REDUCTION [SIZE-2]: Build target changed from `prod` (via *build anchor)
+  # to `streamlit-prod`. The `prod` target inherits the nvidia/cuda base image
+  # and the full PyTorch cu124 wheel set (~9–10 GB combined). Streamlit never
+  # loads model files or issues CUDA calls — it only calls http://api:8000.
+  # The new `streamlit-prod` stage uses python:3.11-slim as its base and omits
+  # torch entirely, reducing the image from ~16 GB to ~2.5–3 GB.
+  #
+  # API_URL uses Docker-internal service name `api`, not localhost.
+  # Your browser accesses Streamlit on localhost:8501 as normal.
+  #
+  # URL : http://localhost:8501
+  # ───────────────────────────────────────────────────────────────────────────
+  streamlit:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: streamlit-prod
+    container_name: insurance-streamlit
+    command: >
+      streamlit run app/streamlit_app.py
+        --server.address=0.0.0.0
+        --server.port=8501
+        --server.headless=true
+        --logger.level=info
+    ports:
+      - "8501:8501"
+    volumes: *mounts
+    env_file:
+      - ../.env.docker
+    environment:
+      API_URL: "http://api:8000"
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_TRACKING_USERNAME: "${MLFLOW_ADMIN_USERNAME}"
+      MLFLOW_TRACKING_PASSWORD: "${MLFLOW_ADMIN_PASSWORD}"
+      LOG_FILE: "logs/streamlit.log"
+      TZ: "Asia/Kolkata"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - insurance_net
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  insurance_net:
+    driver: bridge
+    # Explicit subnet avoids collisions with corporate VPN ranges (172.16-31.x)
+    ipam:
+      config:
+        - subnet: 192.168.200.0/24

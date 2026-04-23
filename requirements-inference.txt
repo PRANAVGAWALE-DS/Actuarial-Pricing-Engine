@@ -1,0 +1,114 @@
+# =============================================================================
+# =============================================================================
+# requirements-inference.txt (CLEANED)
+# Production inference image — runtime deps ONLY
+# Build/training/dev tools excluded
+#
+# ⚠️  TORCH IS INTENTIONALLY ABSENT FROM THIS FILE
+# PyTorch requires a special wheel index (download.pytorch.org/whl/cu124) that
+# cannot be expressed inside a requirements file without also affecting other
+# packages.  It is installed as a separate explicit step in the Dockerfile
+# builder stage before this file is processed:
+#
+#   RUN pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 \
+#       torchaudio==2.6.0+cu124 \
+#       --extra-index-url https://download.pytorch.org/whl/cu124
+#
+# If you install this file standalone (outside Docker), install torch first:
+#   pip install torch==2.6.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements-inference.txt
+#
+# For CPU-only environments:
+#   pip install torch==2.6.0  # from PyPI
+#   pip install -r requirements-inference.txt
+#
+# FIX [MEDIUM]: This file is now wired into the Dockerfile builder stage.
+#   docker/Dockerfile builder stage:
+#     COPY requirements-inference.txt /tmp/requirements.txt
+#     RUN pip install --no-cache-dir -r /tmp/requirements.txt
+#   Previously the Dockerfile still used requirements.txt, making this file
+#   dead configuration. See docker/Dockerfile for the corrected COPY line.
+#
+# FIX [HIGH]: Added matplotlib==3.10.6.
+#   shap==0.48.0 is listed below and used for inference-time explanations.
+#   SHAP's plot functions (shap.plots.*, force_plot, waterfall_plot) have a
+#   hard import-time dependency on matplotlib. Without it the inference
+#   container raises ImportError on any SHAP visualisation call.
+#   If SHAP is used only for shap_values() computation (no plots), matplotlib
+#   is still the safer default because shap conditionally imports it at the
+#   top of several submodules.
+#
+# CHANGES: Removed 14 unused/training-only packages (see bottom of file)
+# =============================================================================
+
+# ── ML Inference (Core Models) ────────────────────────────────────────────────
+scikit-learn==1.7.2
+xgboost==3.1.1
+lightgbm==4.6.0
+joblib==1.5.2
+scipy==1.16.2
+numpy==2.3.3
+pandas==2.3.3
+shap==0.48.0
+statsmodels==0.14.5
+
+# ── API & Serving ─────────────────────────────────────────────────────────────
+fastapi==0.118.0
+starlette==0.48.0
+uvicorn==0.37.0
+sse-starlette==3.0.2
+pydantic==2.11.9
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+streamlit==1.50.0
+plotly==6.3.0
+rich==14.1.0
+
+# ── Visualization (required by shap) ─────────────────────────────────────────
+# FIX [HIGH]: matplotlib added — shap has a hard import-time dependency on it.
+# seaborn intentionally excluded: not used by inference paths.
+matplotlib==3.10.6
+
+# ── MLflow Tracking (Inference-Time Logging) ──────────────────────────────────
+mlflow==3.4.0
+
+# ── Config & Utilities ────────────────────────────────────────────────────────
+python-dotenv==1.1.1
+PyYAML==6.0.3
+
+# ── HTTP & System Monitoring ─────────────────────────────────────────────────
+requests==2.32.5
+urllib3==2.5.0
+psutil==7.1.0
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+click==8.1.8
+
+# =============================================================================
+# REMOVED (14 packages):
+#
+# Training-Only Optimization:
+#   optuna                   (HPO — training only, not used at inference time)
+#   mlflow-tracing           (not used)
+#   numba                    (JIT compiler for training)
+#
+# Config Management (training-only):
+#   omegaconf                (training feature sweeps)
+#   pydantic-settings        (not imported)
+#
+# Data Serialization (not needed for inference):
+#   pyarrow, protobuf, orjson, jsonschema, fsspec, filelock
+#
+# Database (no DB calls in inference):
+#   sqlalchemy
+#
+# Utilities (not imported at inference time):
+#   cloudpickle, cachetools, tabulate, certifi
+#   colorlog, colorama      (logging only)
+#   tqdm                    (training progress bars only)
+#   seaborn                 (not used in inference paths)
+#
+# UI (not used in inference API):
+#   pydeck                  (not imported)
+#
+# =============================================================================

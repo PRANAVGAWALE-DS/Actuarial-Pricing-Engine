@@ -1,0 +1,43 @@
+# =============================================================================
+# FILE     : .github/dependabot.yml
+# PROJECT  : Improved_ML_Insurance
+#
+# Keeps GitHub Actions SHA pins current automatically.
+# Opens a PR when a new Action version is available — includes the correct
+# full commit SHA so you can verify before merging.
+#
+# Scope: "github-actions" only.
+# Python package updates are NOT managed here because pip/conda deps are
+# managed via requirements.txt / pyproject.toml with explicit version pins
+# that require human review before updating (ML pipelines are sensitive to
+# library version changes).
+#
+# Cadence: weekly, grouped into a single PR per update cycle to minimise
+# noise.  Change to daily if you need faster security patching.
+# =============================================================================
+
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    # Group all Actions updates into a single PR per cycle.
+    # Avoids flood of individual PRs when several actions have patches.
+    groups:
+      actions-updates:
+        patterns:
+          - "*"
+    # Label every Dependabot PR so it's easy to filter in the PR list.
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # Limit open PRs — stale PRs pile up when not merged promptly.
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
