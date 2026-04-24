@@ -519,3 +519,6 @@ reports/
 
 # Secret — never commit
 .env.docker
+
+# Generated pipeline artifacts
+reports/
