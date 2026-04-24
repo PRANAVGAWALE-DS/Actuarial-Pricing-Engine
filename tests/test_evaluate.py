@@ -36,7 +36,6 @@ from insurance_ml.evaluate import (
     BusinessMetricsCalculator,
 )
 
-
 # ===========================================================================
 # R² sentinel: n=1 segment must return NaN
 # ===========================================================================
@@ -85,9 +84,7 @@ class TestR2Sentinel:
         low = results.get("low_risk")
         assert low is not None, "low_risk segment should exist"
         assert low["n_samples"] == 1
-        assert math.isnan(low["r2"]), (
-            f"Expected NaN for n=1 segment r2, got {low['r2']!r}"
-        )
+        assert math.isnan(low["r2"]), f"Expected NaN for n=1 segment r2, got {low['r2']!r}"
 
     def test_calculate_segment_metrics_two_samples_r2_is_finite(self) -> None:
         calc = BusinessMetricsCalculator()
@@ -134,9 +131,9 @@ class TestR2Sentinel:
         # Find any segment with n_samples == 1
         single_segments = {k: v for k, v in results.items() if v["n_samples"] == 1}
         for seg_name, metrics in single_segments.items():
-            assert math.isnan(metrics["r2"]), (
-                f"Segment '{seg_name}' n=1 should have r2=NaN, got {metrics['r2']}"
-            )
+            assert math.isnan(
+                metrics["r2"]
+            ), f"Segment '{seg_name}' n=1 should have r2=NaN, got {metrics['r2']}"
 
 
 # ===========================================================================
@@ -153,9 +150,9 @@ class TestBusinessConfigDefaults:
         to reach 50% churn probability).  Must be 1.0.
         """
         cfg = BusinessConfig()
-        assert cfg.churn_sensitivity == 1.0, (
-            f"Expected churn_sensitivity=1.0, got {cfg.churn_sensitivity}"
-        )
+        assert (
+            cfg.churn_sensitivity == 1.0
+        ), f"Expected churn_sensitivity=1.0, got {cfg.churn_sensitivity}"
 
     def test_from_config_dict_defaults_churn_sensitivity_to_one(self) -> None:
         """from_config_dict with empty dict should also default to 1.0."""
@@ -186,10 +183,9 @@ class TestLoadBusinessConfigFromYamlShallowCopy:
     subsequent callers.  It must use a shallow copy.
     """
 
-    def test_does_not_mutate_original_config_dict(
-        self, minimal_config: dict, monkeypatch
-    ) -> None:
+    def test_does_not_mutate_original_config_dict(self, minimal_config: dict, monkeypatch) -> None:
         import copy
+
         from insurance_ml import config as cfg_module
         from insurance_ml.evaluate import load_business_config_from_yaml
 
@@ -202,14 +198,15 @@ class TestLoadBusinessConfigFromYamlShallowCopy:
         load_business_config_from_yaml()  # second call — must not see mutations
 
         # Verify the original minimal_config was not changed
-        assert minimal_config.get("hybrid_predictor", {}).get("business_config") == \
-               frozen.get("hybrid_predictor", {}).get("business_config"), \
-               "load_business_config_from_yaml mutated the shared config dict (N3)"
+        assert minimal_config.get("hybrid_predictor", {}).get("business_config") == frozen.get(
+            "hybrid_predictor", {}
+        ).get(
+            "business_config"
+        ), "load_business_config_from_yaml mutated the shared config dict (N3)"
 
-    def test_returns_business_config_instance(
-        self, minimal_config: dict, monkeypatch
-    ) -> None:
+    def test_returns_business_config_instance(self, minimal_config: dict, monkeypatch) -> None:
         import copy
+
         from insurance_ml import config as cfg_module
         from insurance_ml.evaluate import load_business_config_from_yaml
 
@@ -221,7 +218,9 @@ class TestLoadBusinessConfigFromYamlShallowCopy:
         from insurance_ml import config as cfg_module
         from insurance_ml.evaluate import load_business_config_from_yaml
 
-        monkeypatch.setattr(cfg_module, "load_config", lambda: (_ for _ in ()).throw(OSError("no config")))
+        monkeypatch.setattr(
+            cfg_module, "load_config", lambda: (_ for _ in ()).throw(OSError("no config"))
+        )
         result = load_business_config_from_yaml()
         assert isinstance(result, BusinessConfig)
         assert result.churn_sensitivity == 1.0
@@ -306,9 +305,7 @@ class TestBusinessMetricsCalculatorPortfolioMetrics:
         y_true_val = 12000.0
         y_pred_val = 11000.0
 
-        vec = calc.calculate_portfolio_metrics(
-            np.array([y_true_val]), np.array([y_pred_val])
-        )
+        vec = calc.calculate_portfolio_metrics(np.array([y_true_val]), np.array([y_pred_val]))
         scalar = calc.calculate_single_prediction_value(y_true_val, y_pred_val)
 
         assert math.isclose(

@@ -1,67 +1,19 @@
 """
 Enhanced Production Hybrid Prediction Pipeline v6.3.3
 =====================================================
-
-🆕 v6.3.3 ENHANCEMENTS (_blend_predictions routing + churn cap):
-✅ CHANGED: above_threshold routing now uses a 50/50 composite signal
-           (0.5 * ml_preds + 0.5 * act_preds) instead of act_preds alone.
-           Prevents boundary flip-flops when the two signals disagree near
-           the threshold - composite damps instability without changing the
-           blending weights downstream.
-✅ ADDED:   Churn cap in _blend_predictions: final predictions are clipped to
-           ml_preds x max_actuarial_uplift_ratio (default 1.15, configurable
-           via hybrid_predictor.max_actuarial_uplift_ratio in config.yaml).
-           Applied post-blend so soft-blend interpolation is not distorted.
-✅ RENAMED: blend_diagnostics key blended_count -> non_ml_dominant_count for
-           semantic clarity (counts ALL policies not in the ML-only zone,
-           i.e. actuarial-dominant + transition).
-✅ CONFIG:  hybrid_predictor.max_actuarial_uplift_ratio: 1.15 added to
-           config.yaml (tuning guide in inline comments).
-
-🆕 v6.3.2 CRITICAL FIX (C1 — Heteroscedastic CI):
-✅ FIXED: predict_with_intervals() now reads per-bin quantiles from
-          model artifact (_conformal_data.heteroscedastic_bins) instead
-          of a single global split-conformal quantile.  This resolves a
-          3.5× CI width mismatch ($36K global vs $125K training CI).
-✅ ADDED: Asymmetric upper/lower ratio support (asym_upper_ratio /
-          asym_lower_ratio) for skew-aware insurance intervals.
-✅ ADDED: Graceful fallback to global split-conformal with explicit
-          mismatch warning when artifact lacks stored bins.
-✅ ADDED: _upper_q / _lower_q arrays propagated through ALL CI code
-          paths (conformal, split-conformal fallback, parametric
-          Gaussian) so interval construction is uniform.
-
-🆕 v6.3.1 CRITICAL FIXES (Based on rigorous review):
-✅ FIXED: Calibration now configurable (ML-only vs full hybrid)
-✅ FIXED: Confidence intervals computed correctly in log space
-✅ FIXED: Tail risk warnings use governance-appropriate language
-✅ KEPT: Actuarial-based routing (proven optimal by evaluation)
-✅ ADDED: Actuarial conservativeness detection and logging
-✅ ADDED: Calibration strategy validation
-
-RETAINED from v6.3.0:
-✅ Business-focused prediction statistics
-✅ Tail risk warning system
-✅ Enhanced blend diagnostics
-✅ Recommended metrics exposure
-✅ Production drift monitoring
-
-CRITICAL CONFIGURATION:
-Set `calibration.apply_to_ml_only: true` if actuarial params are conservative
-Set `calibration.apply_to_ml_only: false` if actuarial params are competitive
 """
 
 import json
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-
 import math as _math
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-from insurance_ml.config import load_config, get_feature_config
+from insurance_ml.config import get_feature_config, load_config
 from insurance_ml.features import BiasCorrection, FeatureEngineer
 from insurance_ml.models import ModelManager
 from insurance_ml.monitoring import DriftMonitor
@@ -75,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 _CONFORMAL_STD_MIN = 1e-4  # Minimum conformal residual std to avoid degeneracy
 
-# L-03 FIX: moved from inside predict_with_intervals() where it was re-created
+# moved from inside predict_with_intervals() where it was re-created
 # on every call.  Controls the hard cap on upper CI bounds: the inverse-transformed
 # upper bound is clipped to y_max_safe × _CI_UPPER_CAP_FACTOR to prevent NaN/inf
 # from extreme OOD Yeo-Johnson inputs while still reflecting real uncertainty.
@@ -90,16 +42,16 @@ _CI_UPPER_CAP_FACTOR: float = 3.0
 
 def validate_prediction_scale(
     predictions: np.ndarray, scale_type: str = "log", method: str = "log1p"
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """Validate predictions are in expected scale.
 
-    FIX U-03: Previous thresholds (max > 20.0 → error, max < 5.0 → warning) were
+    Previous thresholds (max > 20.0 → error, max < 5.0 → warning) were
     calibrated for log1p only.  Yeo-Johnson of a $60K+ smoker premium can reach
     YJ ≈ 22–25 in transformed space, causing false SCALE ERROR crashes for valid
     high-value predictions.  Conversely, a batch of low-value ($1K–$2K) non-smoker
     policies has YJ max ≈ 2–3, triggering a false SCALE WARNING.
 
-    Fix: raise the hard ceiling to 30.0 and lower the suspiciously-small floor to
+    raise the hard ceiling to 30.0 and lower the suspiciously-small floor to
     1.0 to accommodate the full YJ range while still catching genuine unit errors
     (dollar-scale values reach thousands, not single digits).
     """
@@ -150,7 +102,7 @@ def validate_prediction_scale(
 
 
 # =====================================================================
-# INCIDENT 3 FIX — HIGH-VALUE SEGMENT ROUTER
+# HIGH-VALUE SEGMENT ROUTER
 # =====================================================================
 
 
@@ -188,7 +140,7 @@ class HighValueSegmentRouter:
     """
 
     HIGH_VALUE_THRESHOLD: float = 16_701.0  # P75 of charges from pipeline log
-    # v7.5.4 FIX: Raised from 1.00 to 1.08 ($18,037).
+    # Raised from 1.00 to 1.08 ($18,037).
     # At 1.00 the blend zone started exactly at the routing threshold ($16,701),
     # causing High+ segment ($14K-$16.7K) predictions near the boundary to
     # partially route through the specialist. The specialist trains on y_true >
@@ -196,9 +148,7 @@ class HighValueSegmentRouter:
     # High (R²: -2.28→-2.77) and High+ (R²: -33.4→-35.0) in training log.
     # At 1.08 the blend zone is $18,037–$21,695, cleanly above the segment boundary.
     BLEND_LOWER_FACTOR: float = 1.08
-    BLEND_UPPER_FACTOR: float = (
-        1.299  # blend ends at $21,705 ≈ $21,701 (TRANSITION_ZONE[1])
-    )
+    BLEND_UPPER_FACTOR: float = 1.299  # blend ends at $21,705 ≈ $21,701 (TRANSITION_ZONE[1])
 
     # Model name as written to disk by HighValueSpecialist.save() in models.py
     DEFAULT_SPECIALIST_NAME: str = "xgboost_high_value_specialist"
@@ -206,8 +156,8 @@ class HighValueSegmentRouter:
     def __init__(
         self,
         global_pipeline: "PredictionPipeline",
-        specialist_model_name: Optional[str] = None,
-        threshold: Optional[float] = None,
+        specialist_model_name: str | None = None,
+        threshold: float | None = None,
     ) -> None:
         """
         Args:
@@ -220,9 +170,7 @@ class HighValueSegmentRouter:
                                     Default: HIGH_VALUE_THRESHOLD ($16,701).
         """
         self.global_pipeline = global_pipeline
-        self.specialist_model_name = (
-            specialist_model_name or self.DEFAULT_SPECIALIST_NAME
-        )
+        self.specialist_model_name = specialist_model_name or self.DEFAULT_SPECIALIST_NAME
         self.threshold = threshold or self.HIGH_VALUE_THRESHOLD
         self._lower = self.threshold * self.BLEND_LOWER_FACTOR
         self._upper = self.threshold * self.BLEND_UPPER_FACTOR
@@ -258,7 +206,7 @@ class HighValueSegmentRouter:
                 "Train HighValueSpecialist and save to 'models/' to activate.",
                 self.specialist_model_name,
             )
-        except (OSError, IOError, RuntimeError) as _e:
+        except (OSError, RuntimeError) as _e:
             logger.warning(
                 "⚠️  HighValueSegmentRouter: could not load specialist (%s) — "
                 "falling back to global model for all segments.",
@@ -274,7 +222,7 @@ class HighValueSegmentRouter:
         processed_input: pd.DataFrame,
         global_preds_original: np.ndarray,
         feature_engineer: Any,
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """
         Blend global and specialist predictions based on prediction magnitude.
 
@@ -333,7 +281,7 @@ class HighValueSegmentRouter:
         )
 
         try:
-            # B1 FIX: Specialist model runs on cuda:0 (same as global).  Calling
+            # Specialist model runs on cuda:0 (same as global).  Calling
             # self.specialist_model.predict(DataFrame) triggers XGBoost's inplace_predict
             # with a CPU input vs a CUDA booster, emitting the device-mismatch warning
             # on every inference call.  Apply the same DMatrix workaround used for the
@@ -347,18 +295,14 @@ class HighValueSegmentRouter:
                 import xgboost as _xgb_spec
 
                 if hasattr(self.specialist_model, "get_booster"):
-                    _spec_arr = (
-                        X_spec.values
-                        if hasattr(X_spec, "values")
-                        else np.asarray(X_spec)
-                    )
+                    _spec_arr = X_spec.values if hasattr(X_spec, "values") else np.asarray(X_spec)
                     _spec_dmat = _xgb_spec.DMatrix(_spec_arr)
                     spec_raw = self.specialist_model.get_booster().predict(_spec_dmat)
                 else:
                     spec_raw = self.specialist_model.predict(X_spec)
             except Exception:
                 spec_raw = self.specialist_model.predict(X_spec)
-            # ── FIX: specialist is trained on original-scale USD directly.
+            # specialist is trained on original-scale USD directly.
             # Its .predict() output is already in dollar space — do NOT call
             # inverse_transform_target() here.  That call was treating e.g.
             # $25,000 as a yeo-johnson space value (~11.3 in log-space maps to
@@ -400,8 +344,7 @@ class HighValueSegmentRouter:
         # Blend zone: linear alpha from 0 (global) → 1 (specialist)
         if n_blend > 0:
             alpha = np.clip(
-                (global_preds_original[mask_blend] - self._lower)
-                / (self._upper - self._lower),
+                (global_preds_original[mask_blend] - self._lower) / (self._upper - self._lower),
                 0.0,
                 1.0,
             )
@@ -409,7 +352,7 @@ class HighValueSegmentRouter:
                 mask_blend
             ] + alpha * spec_full[mask_blend]
 
-        diagnostics: Dict[str, Any] = {
+        diagnostics: dict[str, Any] = {
             "routing_enabled": True,
             "specialist_invoked": True,
             "threshold": self.threshold,
@@ -447,17 +390,16 @@ class PredictionPipeline:
     """
     Enhanced ML prediction pipeline with insurance-grade validation
 
-    Version 6.3.3 - Production-ready with all critical fixes applied
     """
 
     VERSION = "6.3.3"
 
     def __init__(
         self,
-        model_name: Optional[str] = None,
-        preprocessor_path: Optional[str] = None,
-        model_dir: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        model_name: str | None = None,
+        preprocessor_path: str | None = None,
+        model_dir: str | None = None,
+        config: dict[str, Any] | None = None,
     ):
         """Initialize pipeline with enhanced validation"""
         # SAFETY: copy the dict so we never mutate the caller's config object.
@@ -504,13 +446,13 @@ class PredictionPipeline:
             logger.info(f"✅ Loaded preprocessor: {preprocessor_path}")
             logger.info(f"   Target transformation: {_transform_method}")
 
-            # ── F-01 FIX: Load BiasCorrection object for point-prediction correction ──
+            # Load BiasCorrection object for point-prediction correction ──
             self._bias_correction = None
             bias_path = Path(preprocessor_path).parent / "bias_correction.json"
 
             if bias_path.exists():
                 try:
-                    with open(bias_path, "r") as _f:
+                    with open(bias_path) as _f:
                         _bc_data = json.load(_f)
                     self._bias_correction = BiasCorrection.from_dict(_bc_data)
 
@@ -537,13 +479,9 @@ class PredictionPipeline:
                                 f"{_name}: ⚠️  sentinel (no-op, degenerate training ratio)"
                             )
                         elif _v < 0:
-                            _tier_info.append(
-                                f"{_name}: ↓ {_factor:.4f} ({(_factor-1)*100:+.1f}%)"
-                            )
+                            _tier_info.append(f"{_name}: ↓ {_factor:.4f} ({(_factor-1)*100:+.1f}%)")
                         else:
-                            _tier_info.append(
-                                f"{_name}: ↑ {_factor:.4f} ({(_factor-1)*100:+.1f}%)"
-                            )
+                            _tier_info.append(f"{_name}: ↑ {_factor:.4f} ({(_factor-1)*100:+.1f}%)")
 
                     _has_sentinel = any(
                         [
@@ -554,13 +492,11 @@ class PredictionPipeline:
                     )
                     if _has_sentinel:
                         logger.warning(
-                            f"⚠️  BiasCorrection has sentinel tier(s) (degenerate training ratio).\n"
-                            f"   Retrain to resolve. CI falls back to conformal residuals."
+                            "⚠️  BiasCorrection has sentinel tier(s) (degenerate training ratio).\n"
+                            "   Retrain to resolve. CI falls back to conformal residuals."
                         )
                     else:
-                        logger.info(
-                            f"ℹ️  BiasCorrection tier corrections: {'; '.join(_tier_info)}"
-                        )
+                        logger.info(f"ℹ️  BiasCorrection tier corrections: {'; '.join(_tier_info)}")
 
                     logger.info(
                         f"✅ BiasCorrection loaded from {bias_path.name}\n"
@@ -569,12 +505,12 @@ class PredictionPipeline:
                         f"var_high={self._bias_correction.var_high:.6f}"
                     )
 
-                    # ── FIX #6: Validate BiasCorrection is consistent with
+                    # Validate BiasCorrection is consistent with
                     #            the copy embedded in the model artifact.
                     #            A mismatch means the .json and the model were
                     #            saved from different training checkpoints.
                     _model_bc = (
-                        getattr(self.model, "_bias_correction", None)
+                        getattr(self.model, "_bias_correction", None)  # type: ignore[has-type]
                         if hasattr(self, "model")
                         else None
                     )
@@ -609,9 +545,7 @@ class PredictionPipeline:
                         f"Unsuitable for CI std derivation; CI will use conformal residuals."
                     )
                 else:
-                    logger.debug(
-                        f"✅ Uncertainty quantification available: variance={_lrv:.6f}"
-                    )
+                    logger.debug(f"✅ Uncertainty quantification available: variance={_lrv:.6f}")
             else:
                 logger.warning(
                     "⚠️ _log_residual_variance missing — predict_with_intervals() degraded."
@@ -664,7 +598,7 @@ class PredictionPipeline:
                         f"   Preprocessor produces: {actual_features} features"
                     )
 
-                # FIX H6: apply the same DMatrix workaround used in predict() so
+                # apply the same DMatrix workaround used in predict() so
                 # the init validation call uses the GPU path and does NOT emit the
                 # "Falling back to prediction using DMatrix due to mismatched devices"
                 # warning on every startup.  The warning fires because XGBoost's
@@ -673,6 +607,7 @@ class PredictionPipeline:
                 # inplace_predict entirely — DMatrix.predict() has no device check.
                 try:
                     import xgboost as _xgb_init
+
                     if hasattr(self.model, "get_booster"):
                         _init_arr = (
                             test_output.values
@@ -687,21 +622,17 @@ class PredictionPipeline:
                     # Non-XGBoost model or DMatrix unavailable — fall back silently.
                     self.model.predict(test_output)
 
-                logger.info(
-                    f"✅ Feature validation passed: {expected_features} features"
-                )
+                logger.info(f"✅ Feature validation passed: {expected_features} features")
 
             logger.info(f"✅ Loaded model: {self.model_name}")
             logger.info("=" * 70)
 
-            # ── FIX #6: Cross-validate BiasCorrection from JSON vs model artifact ──
+            # Cross-validate BiasCorrection from JSON vs model artifact ──
             # Both are written by train.py from the same BiasCorrection instance,
             # but if the model was retrained without regenerating the preprocessor
             # (or vice versa), the two copies can diverge.
             _bc_json = self._bias_correction  # loaded from bias_correction.json
-            _bc_model = getattr(
-                self.model, "_bias_correction", None
-            )  # from model metadata
+            _bc_model = getattr(self.model, "_bias_correction", None)  # from model metadata
             # Architecture note: if self.model is a CalibratedModel, __getattr__ delegates
             # to base_model._bias_correction correctly. However CalibratedModel.__setattr__
             # does NOT delegate _bias_correction writes to base_model — a direct assignment
@@ -709,7 +640,7 @@ class PredictionPipeline:
             # calibrated_model._bias_correction post-fit, the embedded value and the
             # base_model value will silently diverge. (Finding 5 — no action today.)
 
-            # FIX-4 (v7.4.4): changed condition from
+            # changed condition from
             #   'if _bc_json is not None AND _bc_model is not None'
             # to
             #   'if _bc_json is not None'
@@ -722,13 +653,13 @@ class PredictionPipeline:
             if _bc_json is not None and _bc_model is not None:
                 _TOLERANCE = 1e-4
                 _mismatches = []
-                # B2 FIX: the original list only included "threshold_low" (a 3-tier
+                # the original list only included "threshold_low" (a 3-tier
                 # attribute absent on 2-tier objects). For 2-tier BiasCorrection the
                 # routing attribute is "threshold", not "threshold_low".  Omitting
                 # "threshold" from the check meant a stale JSON with the wrong routing
                 # boundary logged "✅ consistency check passed" — a false positive on
                 # every single-threshold BC loaded from a mismatched run.
-                # Fix: check "threshold" first (universal), then "threshold_low"
+                # check "threshold" first (universal), then "threshold_low"
                 # (3-tier only — silently skipped when None via the guard below).
                 for _attr in ("var_low", "var_high", "threshold", "threshold_low"):
                     _v_json = getattr(_bc_json, _attr, None)
@@ -766,8 +697,7 @@ class PredictionPipeline:
                 # JSON loaded but model artifact has no embedded BiasCorrection.
                 # This means the model was trained with bias_correction=None (quantile
                 # model) but a stale bias_correction.json from a previous non-quantile
-                # run is still on disk.  train.py Fix-3 should rename this file on
-                # the next retrain; flag it clearly until then.
+                # run is still on disk.
                 logger.warning(
                     "⚠️  BiasCorrection STALE ARTIFACT DETECTED:\n"
                     "   bias_correction.json exists on disk but the loaded model artifact "
@@ -785,7 +715,7 @@ class PredictionPipeline:
                     "(no JSON artifact — quantile model, correction intentionally absent)"
                 )
 
-            # ── INCIDENT 3 FIX: High-value segment router ─────────────────────
+            # ── High-value segment router ─────────────────────
             # Non-fatal: if specialist model file is absent (pre-training or cold
             # start), HighValueSegmentRouter sets enabled=False and every call to
             # route() is a transparent no-op.  PredictionPipeline works normally.
@@ -795,7 +725,7 @@ class PredictionPipeline:
             logger.error(f"❌ Error loading model: {e}")
             raise
 
-    def _resolve_preprocessor_path(self, explicit_path: Optional[str]) -> str:
+    def _resolve_preprocessor_path(self, explicit_path: str | None) -> str:
         """Resolve preprocessor path with versioned-file safety.
 
         Priority:
@@ -819,7 +749,7 @@ class PredictionPipeline:
         _cfg_path = self.config.get("preprocessor_path")
         if _cfg_path and Path(_cfg_path).exists():
             logger.info(f"✅ Preprocessor path from config: {_cfg_path}")
-            return _cfg_path
+            return str(_cfg_path)
 
         # Priority 3 — newest preprocessor_*.joblib in models dir
         if _models_dir.exists():
@@ -861,21 +791,19 @@ class PredictionPipeline:
         try:
             metadata_path = Path(self.model_dir) / "pipeline_metadata.json"
             if metadata_path.exists():
-                with open(metadata_path, "r") as f:
+                with open(metadata_path) as f:
                     metadata = json.load(f)
 
                 best_model = metadata.get("best_model")
                 if best_model:
                     logger.info(f"🎯 Auto-selected best model: {best_model}")
                     if "best_val_rmse" in metadata:
-                        logger.info(
-                            f"   Validation RMSE: ${metadata['best_val_rmse']:,.0f}"
-                        )
+                        logger.info(f"   Validation RMSE: ${metadata['best_val_rmse']:,.0f}")
                     if "best_val_r2" in metadata:
                         logger.info(f"   Validation R²: {metadata['best_val_r2']:.4f}")
                     if "training_timestamp" in metadata:
                         logger.info(f"   Trained: {metadata['training_timestamp']}")
-                    return best_model
+                    return str(best_model)
 
                 # ✅ FALLBACK 1a: Use first trained model from metadata
                 trained_models = metadata.get("trained_models", [])
@@ -885,7 +813,7 @@ class PredictionPipeline:
                         f"⚠️ 'best_model' not in metadata, using first trained model: {fallback_model}\n"
                         f"   Available: {', '.join(trained_models)}"
                     )
-                    return fallback_model
+                    return str(fallback_model)
 
         except Exception as e:
             logger.debug(f"ℹ️ Could not load pipeline_metadata.json: {e}")
@@ -899,7 +827,7 @@ class PredictionPipeline:
                 f"⚠️ Using model from config.yaml: {config_model}\n"
                 f"   This may not be the actual best model from training!"
             )
-            return config_model
+            return str(config_model)
 
         # ========================================================================
         # PRIORITY 3: Scan models directory for available models
@@ -921,12 +849,12 @@ class PredictionPipeline:
                     f"   Found {len(available_models)} model(s): {', '.join(available_models)}"
                 )
 
-                # L-01 FIX: stale comment removed. xgboost_median is first because
+                # stale comment removed. xgboost_median is first because
                 # it is the designated pricing model (reg:squarederror).  Linear models
                 # are last — they have the lowest R² on this dataset and should only be
                 # selected when no tree-based model is available.
                 preferred_order = [
-                    # ── FIX: xgboost_median added above xgboost ──────────────────
+                    # xgboost_median added above xgboost ──────────────────
                     # xgboost_median (reg:squarederror) is the designated pricing
                     # model.  It must rank above the risk model (xgboost,
                     # reg:quantileerror α=0.65) so that cold-start / metadata-absent
@@ -987,7 +915,7 @@ class PredictionPipeline:
     def _validate_categorical_values(self, input_data: pd.DataFrame) -> pd.DataFrame:
         """Validate and normalize categorical input values.
 
-        FIX M3: astype(str) cast added before every .str chain so that numeric
+        astype(str) cast added before every .str chain so that numeric
         values (e.g. sex=0/1 from an upstream encoder) produce a clear ValueError
         instead of a silent all-NaN series that reaches the isin() check and emits
         a confusing 'Invalid sex values: [nan]' message.
@@ -1026,13 +954,13 @@ class PredictionPipeline:
             df["bmi"] = pd.to_numeric(df["bmi"], errors="coerce")
             df["children"] = pd.to_numeric(df["children"], errors="coerce")
         except Exception as e:
-            raise ValueError(f"Error converting numeric columns: {e}")
+            raise ValueError(f"Error converting numeric columns: {e}") from e
 
         numeric_cols = ["age", "bmi", "children"]
         if df[numeric_cols].isna().any().any():
             nan_counts = df[numeric_cols].isna().sum()
             nan_cols = nan_counts[nan_counts > 0].to_dict()
-            # FIX M4: include problem row indices in the error message.
+            # include problem row indices in the error message.
             # Previously problem_rows was computed but silently dropped from the
             # ValueError, forcing operators to re-run the batch to identify bad rows.
             problem_rows = df[df[numeric_cols].isna().any(axis=1)].index.tolist()
@@ -1043,7 +971,7 @@ class PredictionPipeline:
                 f"{'  (first 20 shown)' if len(problem_rows) > 20 else ''}"
             )
 
-        # ── F-08 FIX: Read validation bounds from config, not hardcoded literals ──
+        # ── Read validation bounds from config, not hardcoded literals ──
         _feat = self.config.get("features", {})
 
         _bmi_min = _feat.get("bmi_min", 10.0)
@@ -1061,9 +989,7 @@ class PredictionPipeline:
         if not bmi_invalid.empty:
             raise ValueError(f"BMI must be in [{_bmi_min}, {_bmi_max}]")
 
-        children_invalid = df[
-            (df["children"] < _children_min) | (df["children"] > _children_max)
-        ]
+        children_invalid = df[(df["children"] < _children_min) | (df["children"] > _children_max)]
         if not children_invalid.empty:
             raise ValueError(f"Children must be in [{_children_min}, {_children_max}]")
 
@@ -1077,9 +1003,7 @@ class PredictionPipeline:
             logger.error(f"❌ Error in preprocessing pipeline: {e}")
             raise
 
-    def predict(
-        self, input_data: pd.DataFrame, return_reliability: bool = True
-    ) -> Dict[str, Any]:
+    def predict(self, input_data: pd.DataFrame, return_reliability: bool = True) -> dict[str, Any]:
         """Predict with business-focused statistics"""
         if input_data.empty:
             raise ValueError("Input data cannot be empty")
@@ -1127,13 +1051,13 @@ class PredictionPipeline:
                 logger.debug(scale_msg)
 
             if len(predictions_raw) != len(input_data):
-                raise ValueError(f"Prediction count mismatch!")
+                raise ValueError("Prediction count mismatch!")
 
             if not isinstance(predictions_raw, np.ndarray):
                 predictions_raw = np.array(predictions_raw)
 
             if np.any(~np.isfinite(predictions_raw)):
-                raise ValueError(f"Model produced invalid predictions")
+                raise ValueError("Model produced invalid predictions")
 
             predictions_original = self.feature_engineer.inverse_transform_target(
                 predictions_raw,
@@ -1142,7 +1066,7 @@ class PredictionPipeline:
                 context="prediction",
             )
 
-            # ── F-01 FIX: Apply stratified bias correction to point predictions ──
+            # ── Apply stratified bias correction to point predictions ──
             # NOTE: At inference there is no ground-truth y; we use y_pred itself
             # as the routing signal for tier assignment. This is the correct
             # convention: borderline predictions near tier thresholds may be
@@ -1153,9 +1077,7 @@ class PredictionPipeline:
                     y_original=predictions_original,  # self-referential routing at inference
                     log_details=logger.isEnabledFor(logging.DEBUG),
                 )
-                logger.debug(
-                    "✅ Stratified bias correction applied to point predictions."
-                )
+                logger.debug("✅ Stratified bias correction applied to point predictions.")
             else:
                 logger.debug(
                     "⚠️ No bias correction — predictions not corrected for log-transform bias."
@@ -1177,7 +1099,7 @@ class PredictionPipeline:
                 logger.warning(f"⚠️ Clipping {n_negative} negative predictions to 0")
                 predictions_original = np.clip(predictions_original, 0, None)
 
-            # ── INCIDENT 3 FIX: Route high-value predictions to specialist ────
+            # ── Route high-value predictions to specialist ────
             # HighValueSegmentRouter blends the global model's output with a
             # specialist model trained exclusively on the high-value segment,
             # using a soft 30% blend window on each side of the routing threshold
@@ -1189,7 +1111,7 @@ class PredictionPipeline:
             # NOTE: processed_input is available from line 586 above.  We pass
             # it here rather than re-running preprocess_input() to avoid double
             # feature-engineering overhead.
-            _routing_diagnostics: Dict[str, Any] = {}
+            _routing_diagnostics: dict[str, Any] = {}
             if self._segment_router.enabled:
                 predictions_original, _routing_diagnostics = self._segment_router.route(
                     processed_input=processed_input,
@@ -1233,29 +1155,19 @@ class PredictionPipeline:
                     ),
                     "n_low_premium": int(np.sum(predictions_original < 5000)),
                     "n_medium_premium": int(
-                        np.sum(
-                            (predictions_original >= 5000)
-                            & (predictions_original < 15000)
-                        )
+                        np.sum((predictions_original >= 5000) & (predictions_original < 15000))
                     ),
                     "n_high_premium": int(np.sum(predictions_original >= 15000)),
                     "pct_low_premium": float(
-                        np.sum(predictions_original < 5000)
-                        / len(predictions_original)
-                        * 100
+                        np.sum(predictions_original < 5000) / len(predictions_original) * 100
                     ),
                     "pct_medium_premium": float(
-                        np.sum(
-                            (predictions_original >= 5000)
-                            & (predictions_original < 15000)
-                        )
+                        np.sum((predictions_original >= 5000) & (predictions_original < 15000))
                         / len(predictions_original)
                         * 100
                     ),
                     "pct_high_premium": float(
-                        np.sum(predictions_original >= 15000)
-                        / len(predictions_original)
-                        * 100
+                        np.sum(predictions_original >= 15000) / len(predictions_original) * 100
                     ),
                 },
                 "validation": {
@@ -1269,23 +1181,21 @@ class PredictionPipeline:
             }
 
             if return_reliability:
-                extreme_threshold = int(self.config.get("prediction", {}).get("extreme_prediction_threshold", 100_000))
+                extreme_threshold = int(
+                    self.config.get("prediction", {}).get("extreme_prediction_threshold", 100_000)
+                )
                 max_pred_val = np.max(predictions_original)
 
                 result["reliability"] = {
                     "has_extreme_predictions": bool(max_pred_val > extreme_threshold),
-                    "extreme_count": int(
-                        np.sum(predictions_original > extreme_threshold)
-                    ),
+                    "extreme_count": int(np.sum(predictions_original > extreme_threshold)),
                     "max_prediction": float(max_pred_val),
-                    # ── F-03 FIX: two precise flags instead of one misleading one ──
+                    # ── two precise flags instead of one misleading one ──
                     # True only when BiasCorrection.apply() was called on these predictions
-                    "point_prediction_bias_corrected": self._bias_correction
-                    is not None,
+                    "point_prediction_bias_corrected": self._bias_correction is not None,
                     # True when _log_residual_variance is available for CI width computation
                     "uncertainty_quantification_available": (
-                        getattr(self.feature_engineer, "_log_residual_variance", None)
-                        is not None
+                        getattr(self.feature_engineer, "_log_residual_variance", None) is not None
                     ),
                     # Deprecated — kept for one release to avoid breaking callers
                     # Will be removed in v6.4.0. Use point_prediction_bias_corrected instead.
@@ -1304,9 +1214,9 @@ class PredictionPipeline:
 
     def predict_with_intervals(
         self, input_data: pd.DataFrame, confidence_level: float = 0.90
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
-        🆕 FIXED: Generate predictions with CORRECT confidence intervals
+        Generate predictions with CORRECT confidence intervals
 
         Confidence intervals are now computed in log space BEFORE inverse transform
         """
@@ -1324,7 +1234,7 @@ class PredictionPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         # Attempt Priority 1: conformal residual std
-        _conformal_std: Optional[float] = None
+        _conformal_std: float | None = None
         _val_residuals = getattr(self.model, "_validation_residuals", None)
         if _val_residuals is not None and len(_val_residuals) > 0:
             _conformal_std = float(np.std(_val_residuals))
@@ -1360,7 +1270,7 @@ class PredictionPipeline:
                     "negative (downward correction encoding — sqrt undefined)"
                     if isinstance(lrv_val, float) and lrv_val < 0
                     else (
-                        f"below minimum usable threshold (0.01)"
+                        "below minimum usable threshold (0.01)"
                         if isinstance(lrv_val, float)
                         else "missing"
                     )
@@ -1381,7 +1291,7 @@ class PredictionPipeline:
         try:
             predictions_log = np.array(result["predictions_log_space"])
 
-            # ── BUG-2 FIX: proper distribution-free conformal quantile ────────
+            # ── proper distribution-free conformal quantile ────────
             # Previous code used  pred ± z × std  which is a PARAMETRIC Gaussian
             # approximation with NO coverage guarantee.  The correct split-conformal
             # method builds the interval from the empirical quantile of absolute
@@ -1401,7 +1311,7 @@ class PredictionPipeline:
             if _val_residuals is not None and n_cal >= 30:
                 conformity_scores = np.abs(_val_residuals)
 
-                # ── C1 FIX: prefer stored heteroscedastic bins over global quantile ──────
+                # ── prefer stored heteroscedastic bins over global quantile ──────
                 # Training uses 9-bin heteroscedastic conformal (per-bin quantiles adaptive
                 # to prediction magnitude).  Inference was using a single global
                 # split-conformal quantile — a 3.5× CI width mismatch ($36K vs $125K
@@ -1409,15 +1319,13 @@ class PredictionPipeline:
                 # directly without refitting.
                 _hetero_bins = None
                 _raw_model = (
-                    self.model.base_model
-                    if hasattr(self.model, "base_model")
-                    else self.model
+                    self.model.base_model if hasattr(self.model, "base_model") else self.model
                 )
                 _cd = getattr(_raw_model, "_conformal_data", None)
                 if isinstance(_cd, dict):
                     _hetero_bins = _cd.get("heteroscedastic_bins")
 
-                # ── Bug #2 fix: validate predictions_log_space before using bins ──
+                # ── validate predictions_log_space before using bins ──
                 # If predict() doesn't populate 'predictions_log_space' (e.g. key
                 # renamed, or a code path that skips it), _preds_log will be empty.
                 # An empty _preds_log produces _per_pred_q of shape (0,), then
@@ -1425,9 +1333,7 @@ class PredictionPipeline:
                 # which is caught by the outer except and silently returns no CI.
                 # Guard: force fallback to global split-conformal when bins are
                 # present but log-space predictions are unavailable.
-                _preds_log = np.array(
-                    result.get("predictions_log_space", []), dtype=float
-                )
+                _preds_log = np.array(result.get("predictions_log_space", []), dtype=float)
                 _n_preds = len(result.get("predictions", []))
                 if _hetero_bins is not None and len(_preds_log) != _n_preds:
                     logger.warning(
@@ -1445,14 +1351,14 @@ class PredictionPipeline:
                     _asym_upper = float(_hetero_bins.get("asym_upper_ratio", 1.0))
                     _asym_lower = float(_hetero_bins.get("asym_lower_ratio", 1.0))
 
-                    # FIX M1: vectorised bin assignment with np.searchsorted.
+                    # vectorised bin assignment with np.searchsorted.
                     # The previous Python nested loop was O(n × b) where n = batch
                     # size and b = number of bins.  At 100K samples × 10 bins that
                     # is 1,000,000 Python iterations (~600ms).  searchsorted is
                     # O(n log b) and runs fully in C — benchmarks to <1ms at 100K.
-                    _bin_indices = np.searchsorted(
-                        _bin_rights, _preds_log, side="right"
-                    ).clip(0, len(_bin_qs) - 1)
+                    _bin_indices = np.searchsorted(_bin_rights, _preds_log, side="right").clip(
+                        0, len(_bin_qs) - 1
+                    )
                     _per_pred_q = _bin_qs[_bin_indices]
 
                     quantile_value = float(np.mean(_per_pred_q))
@@ -1471,9 +1377,7 @@ class PredictionPipeline:
                 else:
                     # ── Fallback: global split-conformal (pre-C1 behaviour) ──────────────
                     q_level = min(1.0, np.ceil((n_cal + 1) * (1 - alpha)) / n_cal)
-                    quantile_value = float(
-                        np.quantile(conformity_scores, q_level, method="higher")
-                    )
+                    quantile_value = float(np.quantile(conformity_scores, q_level, method="higher"))
                     ci_method = "split_conformal"
                     ci_source = "conformal_residuals_split"
                     logger.info(
@@ -1486,7 +1390,7 @@ class PredictionPipeline:
                         "Reported interval width will differ from the training design target. "
                         "Store heteroscedastic bins in the model artifact to restore adaptive CI. "
                         "Re-run train.py with C1 patches applied."
-                        # M-08 FIX: removed stale '$36K / $125K' width literals which reflected
+                        # removed stale '$36K / $125K' width literals which reflected
                         # the pre-fix state (v6.3.1).  Current deployed CI mean width is ~$11,859
                         # (config.yaml ci_mean_width).  Hardcoded widths in a log message cause
                         # false incident reports when operators see numbers that no longer apply.
@@ -1504,9 +1408,7 @@ class PredictionPipeline:
                 ci_source = (
                     "conformal_residuals_std_matched"
                     if _val_residuals is not None
-                    and np.isclose(
-                        _conformal_std, float(np.std(_val_residuals)), rtol=1e-9
-                    )
+                    and np.isclose(_conformal_std, float(np.std(_val_residuals)), rtol=1e-9)
                     else "log_residual_variance"
                 )
                 logger.warning(
@@ -1522,13 +1424,13 @@ class PredictionPipeline:
             upper_log = predictions_log + _upper_q
 
             # Inverse-transform all three arrays in one block.
-            # B2 FIX: Previously a single _inv lambda with clip_to_safe_range=True was
+            # Previously a single _inv lambda with clip_to_safe_range=True was
             # used for all three arrays (point, lower, upper).  For upper CI bounds this
             # truncated extreme-but-valid YJ values at y_max_safe ($89,278), making the
             # reported CI narrower than the model's actual uncertainty for high-value
             # samples.  In insurance, understating upper-tail uncertainty is non-conservative.
             #
-            # Fix: separate lambdas per use-case:
+            # separate lambdas per use-case:
             #   _inv_pt   — point prediction: keep original clip=True (preserves existing behaviour)
             #   _inv_lo   — lower bound: clip at 0 only (no negative premiums)
             #   _inv_hi   — upper bound: unclipped inverse-transform, then hard-cap at
@@ -1536,47 +1438,52 @@ class PredictionPipeline:
             #               from extreme OOD YJ inputs while still reflecting real uncertainty
             _transform_method = self.feature_engineer.target_transformation.method
             _y_max_safe = getattr(self.feature_engineer, "y_max_safe", None)
-            # _CI_UPPER_CAP_FACTOR is now a module-level constant (L-03 fix).
+            # _CI_UPPER_CAP_FACTOR is now a module-level constant.
 
-            _inv_pt = lambda arr: self.feature_engineer.inverse_transform_target(
-                arr,
-                transformation_method=_transform_method,
-                clip_to_safe_range=True,
-                context="prediction",
-            )
-            _inv_lo = lambda arr: np.maximum(
-                self.feature_engineer.inverse_transform_target(
+            def _inv_pt(arr):
+                return self.feature_engineer.inverse_transform_target(
                     arr,
                     transformation_method=_transform_method,
-                    clip_to_safe_range=False,
-                    context="ci_lower_bound",
-                ),
-                0.0,
-            )
-            _inv_hi = lambda arr: (
-                np.minimum(
+                    clip_to_safe_range=True,
+                    context="prediction",
+                )
+
+            def _inv_lo(arr):
+                return np.maximum(
                     self.feature_engineer.inverse_transform_target(
                         arr,
                         transformation_method=_transform_method,
                         clip_to_safe_range=False,
-                        context="ci_upper_bound",
+                        context="ci_lower_bound",
                     ),
-                    _y_max_safe * _CI_UPPER_CAP_FACTOR,
+                    0.0,
                 )
-                if _y_max_safe is not None
-                else self.feature_engineer.inverse_transform_target(
-                    arr,
-                    transformation_method=_transform_method,
-                    clip_to_safe_range=True,
-                    context="ci_upper_bound",
+
+            def _inv_hi(arr):
+                return (
+                    np.minimum(
+                        self.feature_engineer.inverse_transform_target(
+                            arr,
+                            transformation_method=_transform_method,
+                            clip_to_safe_range=False,
+                            context="ci_upper_bound",
+                        ),
+                        _y_max_safe * _CI_UPPER_CAP_FACTOR,
+                    )
+                    if _y_max_safe is not None
+                    else self.feature_engineer.inverse_transform_target(
+                        arr,
+                        transformation_method=_transform_method,
+                        clip_to_safe_range=True,
+                        context="ci_upper_bound",
+                    )
                 )
-            )
 
             predictions_original = _inv_pt(predictions_log)
             lower_bound = _inv_lo(lower_log)
             upper_bound = _inv_hi(upper_log)
 
-            # ── CI CENTERING FIX ──────────────────────────────────────────────
+            # ── CI CENTERING ──────────────────────────────────────────────
             # `predictions_log_space` holds the raw (uncalibrated) model output.
             # `result["predictions"]` holds the FINAL predictions after:
             #   1. BiasCorrection.apply() — stratified multiplicative correction
@@ -1585,11 +1492,11 @@ class PredictionPipeline:
             # to lower_log / upper_log above, so the raw-space CI is off-centre
             # relative to the reported prediction.
             #
-            # Fix: multiply each bound by the same factor that was applied to the
+            # multiply each bound by the same factor that was applied to the
             # point prediction.  This preserves the CI width in log space while
             # ensuring the final interval brackets the calibrated prediction.
             #
-            # FIX U-11: clamp shift_factor to [0.5, 2.0] to prevent extreme
+            # clamp shift_factor to [0.5, 2.0] to prevent extreme
             # BiasCorrection outputs (e.g. clip artefacts producing tiny
             # predictions_original) from inflating upper_bound toward infinity
             # or compressing lower_bound to zero.  Values outside [0.5, 2.0]
@@ -1647,18 +1554,17 @@ class PredictionPipeline:
                     "Distribution-free split-conformal intervals: "
                     "P(Y ∈ CI) ≥ 1-α without Gaussian assumption"
                     if ci_method == "split_conformal"
+                    # T3-D: build note dynamically from the artifact so the
+                    # reported bin count and winsorize percentile stay correct
+                    # if the model is retrained with different hyperparameters.
+                    # Fallback text preserved when _cd is unavailable.
                     else (
-                        # T3-D: build note dynamically from the artifact so the
-                        # reported bin count and winsorize percentile stay correct
-                        # if the model is retrained with different hyperparameters.
-                        # Fallback text preserved when _cd is unavailable.
                         (
                             f"Heteroscedastic conformal: per-bin coverage from stored training "
                             f"artifact ({_cd.get('heteroscedastic_bins', {}).get('n_bins', '?')} bins, "
                             f"winsorized at {_cd.get('winsorize_percentile', 99)}th pctile)"
                         )
-                        if ci_method == "heteroscedastic_conformal"
-                        and isinstance(_cd, dict)
+                        if ci_method == "heteroscedastic_conformal" and isinstance(_cd, dict)
                         else (
                             "Heteroscedastic conformal: per-bin coverage from stored training artifact"
                             if ci_method == "heteroscedastic_conformal"
@@ -1678,7 +1584,7 @@ class PredictionPipeline:
             return result
 
         except Exception as e:
-            # BUG-5 FIX: reuse the result dict already populated by self.predict()
+            # reuse the result dict already populated by self.predict()
             # above. The original code called self.predict() a SECOND time here,
             # doubling latency on every CI failure.
             logger.error(f"❌ Error computing confidence intervals: {e}")
@@ -1694,15 +1600,13 @@ class PredictionPipeline:
             children = int(children)
             bmi = float(bmi)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid numeric input: {e}")
+            raise ValueError(f"Invalid numeric input: {e}") from e
 
-        # ── F-08 FIX: single-record path reads same config bounds as batch path ──
+        # ── single-record path reads same config bounds as batch path ──
         _feat = self.config.get("features", {})
         _age_min, _age_max = _feat.get("age_min", 0.0), _feat.get("age_max", 120.0)
         _bmi_min, _bmi_max = _feat.get("bmi_min", 10.0), _feat.get("bmi_max", 100.0)
-        _children_min, _children_max = _feat.get("children_min", 0), _feat.get(
-            "children_max", 20
-        )
+        _children_min, _children_max = _feat.get("children_min", 0), _feat.get("children_max", 20)
 
         if not _age_min <= age <= _age_max:
             raise ValueError(f"Age must be in [{_age_min}, {_age_max}], got {age}")
@@ -1735,7 +1639,7 @@ class PredictionPipeline:
 
         return prediction
 
-    def get_pipeline_info(self) -> Dict[str, Any]:
+    def get_pipeline_info(self) -> dict[str, Any]:
         """Get comprehensive pipeline information with recommended metrics"""
         metadata = self.feature_engineer.get_feature_metadata()
 
@@ -1787,7 +1691,7 @@ class PredictionPipeline:
 
 class HybridPredictor:
     """
-    v6.3.3: Insurance-grade hybrid predictor with critical fixes
+    v6.3.3: Insurance-grade hybrid predictor
     """
 
     VERSION = "6.3.3"
@@ -1795,13 +1699,13 @@ class HybridPredictor:
     def __init__(
         self,
         ml_predictor: PredictionPipeline,
-        threshold: Optional[float] = None,
-        blend_ratio: Optional[float] = None,
-        use_soft_blending: Optional[bool] = None,
-        soft_blend_window: Optional[float] = None,
-        calibration_factor: Optional[float] = None,
-        actuarial_params: Optional[Dict[str, Any]] = None,
-        config: Optional[Dict[str, Any]] = None,
+        threshold: float | None = None,
+        blend_ratio: float | None = None,
+        use_soft_blending: bool | None = None,
+        soft_blend_window: float | None = None,
+        calibration_factor: float | None = None,
+        actuarial_params: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
     ):
         """Initialize with enhanced validation"""
         if config is None:
@@ -1811,9 +1715,7 @@ class HybridPredictor:
         self.ml_predictor = ml_predictor
         self.config = config
 
-        self.threshold = (
-            threshold if threshold is not None else config.get("threshold", 4500.0)
-        )
+        self.threshold = threshold if threshold is not None else config.get("threshold", 4500.0)
         self.blend_ratio = (
             blend_ratio if blend_ratio is not None else config.get("blend_ratio", 0.70)
         )
@@ -1828,41 +1730,38 @@ class HybridPredictor:
             else config.get("soft_blend_window", 500.0)
         )
 
-        # 🆕 CRITICAL FIX: Calibration configuration
+        # Calibration configuration
         calibration_config = config.get("calibration", {})
         self.calibration_enabled = calibration_config.get("enabled", True)
 
-        # BUG-5 FIX: pricing_factor and risk_factor in config.yaml are DEAD CODE.
+        # pricing_factor and risk_factor in config.yaml are DEAD CODE.
         # HybridPredictor was reading only calibration.factor (legacy single-model key,
         # always 1.00), never the per-model pricing_factor / risk_factor keys.
-        # Fix: resolve the active model name from ml_predictor, then pick the
+        # resolve the active model name from ml_predictor, then pick the
         # correct per-model factor.  Fall back to legacy factor if keys are absent
         # (backward-compatible with single-model deployments).
         if calibration_factor is not None:
             _resolved_cal_factor = calibration_factor
         else:
-            # FIX H2: dispatch on model objective, not model name substring.
+            # dispatch on model objective, not model name substring.
             # "median" in name is fragile — any rename (xgboost_pricing, xgb_mean,
             # etc.) silently applies risk_factor instead of pricing_factor.
             # Read the booster's actual objective string as the canonical signal.
-            _active_model: Optional[str] = getattr(ml_predictor, "model_name", None)
-            _model_objective: Optional[str] = None
+            _active_model: str | None = getattr(ml_predictor, "model_name", None)
+            _model_objective: str | None = None
             try:
                 _raw_m = getattr(ml_predictor, "model", None)
                 if _raw_m is not None:
                     _inner = getattr(_raw_m, "base_model", _raw_m)
                     if hasattr(_inner, "get_xgb_params"):
-                        _model_objective = str(
-                            _inner.get_xgb_params().get("objective", "")
-                        )
+                        _model_objective = str(_inner.get_xgb_params().get("objective", ""))
                     elif hasattr(_inner, "objective"):
                         _model_objective = str(_inner.objective)
             except Exception:
                 pass  # objective unresolvable — fall through to name heuristic
 
             _is_pricing_model = (
-                _model_objective is not None
-                and "squarederror" in _model_objective.lower()
+                _model_objective is not None and "squarederror" in _model_objective.lower()
             ) or (
                 # Name heuristic as secondary fallback only
                 _model_objective is None
@@ -1913,9 +1812,7 @@ class HybridPredictor:
         #   key is absent, which is the more dangerous pricing failure mode.
         # Set 'calibration.apply_to_ml_only: false' explicitly if actuarial is competitive
         # and the full hybrid output should be scaled.
-        self.calibration_apply_to_ml_only = calibration_config.get(
-            "apply_to_ml_only", True
-        )
+        self.calibration_apply_to_ml_only = calibration_config.get("apply_to_ml_only", True)
 
         # Actuarial parameters
         config_actuarial = config.get("actuarial_params", {})
@@ -1929,16 +1826,16 @@ class HybridPredictor:
             # leftover from pre-v7.3.1 that would revert the actuarial formula
             # to the 0.61x ML ratio if config loading ever fails.
             self.actuarial_params = {
-                # FIX C2: fallback literals now match config.yaml actuarial_params
+                # fallback literals now match config.yaml actuarial_params
                 # (×1.087 scaled values from v7.5.0). Previous fallbacks were the
                 # pre-v7.3.1 unscaled values (smoker_multiplier=1.8, base=2795, etc.)
                 # which revert the actuarial formula to the 0.61x ML ratio on any
                 # config load failure — recreating the $255K net loss from Run 3.
-                "base":              config_actuarial.get("base", 3038),
-                "age_coefficient":   config_actuarial.get("age_coefficient", 59.0),
-                "bmi_threshold":     config_actuarial.get("bmi_threshold", 25),
-                "bmi_penalty":       config_actuarial.get("bmi_penalty", 118.2),
-                "children_cost":     config_actuarial.get("children_cost", 675),
+                "base": config_actuarial.get("base", 3038),
+                "age_coefficient": config_actuarial.get("age_coefficient", 59.0),
+                "bmi_threshold": config_actuarial.get("bmi_threshold", 25),
+                "bmi_penalty": config_actuarial.get("bmi_penalty", 118.2),
+                "children_cost": config_actuarial.get("children_cost", 675),
                 "smoker_multiplier": config_actuarial.get("smoker_multiplier", 3.5),
                 "region_multipliers": config_actuarial.get(
                     "region_multipliers",
@@ -1952,7 +1849,7 @@ class HybridPredictor:
                 # Smoker×BMI×age interaction coefficient (v6.3.4).
                 # Defaults to 0.0 so deployments without the config.yaml key
                 # are completely unaffected (interaction term = 0 → no-op).
-                # Set to 8.0 in config.yaml to activate the VH-ratio fix.
+                # Set to 8.0 in config.yaml to activate the VH-ratio.
                 "smoker_bmi_age_coeff": config_actuarial.get("smoker_bmi_age_coeff", 0.0),
             }
 
@@ -2036,7 +1933,7 @@ class HybridPredictor:
         if self.threshold <= 0:
             raise ValueError(f"threshold must be positive, got {self.threshold}")
 
-        # FIX U-01: soft_blend_window=0 with use_soft_blending=True causes
+        # soft_blend_window=0 with use_soft_blending=True causes
         # ZeroDivisionError in _blend_predictions at the `progress` calculation.
         # Guard: when soft blending is enabled the window must be strictly positive.
         if self.use_soft_blending and self.soft_blend_window <= 0:
@@ -2046,10 +1943,10 @@ class HybridPredictor:
                 "Set use_soft_blending: false or provide a positive soft_blend_window."
             )
         if not self.use_soft_blending and self.soft_blend_window < 0:
-            raise ValueError(f"soft_blend_window must be non-negative")
+            raise ValueError("soft_blend_window must be non-negative")
 
         if self.calibration_factor <= 0:
-            raise ValueError(f"calibration_factor must be positive")
+            raise ValueError("calibration_factor must be positive")
 
         required_keys = [
             "base",
@@ -2066,7 +1963,7 @@ class HybridPredictor:
 
         # smoker_bmi_age_coeff is optional (defaults to 0.0) but must not be
         # negative — a negative value would reduce actuarial for high-BMI smokers,
-        # the exact wrong direction for the VH-ratio fix.
+        # the exact wrong direction for the VH-ratio.
         _coeff = self.actuarial_params.get("smoker_bmi_age_coeff", 0.0)
         if _coeff < 0:
             raise ValueError(
@@ -2075,9 +1972,7 @@ class HybridPredictor:
                 "which inverts the intended VH-ratio correction."
             )
 
-    def _calculate_actuarial_prediction(
-        self, customer_data: pd.DataFrame
-    ) -> np.ndarray:
+    def _calculate_actuarial_prediction(self, customer_data: pd.DataFrame) -> np.ndarray:
         """
         Calculate actuarial predictions — fully vectorised.
 
@@ -2094,20 +1989,16 @@ class HybridPredictor:
         df = customer_data  # already validated upstream; no copy needed
 
         # Base + age
-        premium = (
-            params["base"] + df["age"].to_numpy(dtype=float) * params["age_coefficient"]
-        )
+        premium = params["base"] + df["age"].to_numpy(dtype=float) * params["age_coefficient"]
 
         # BMI penalty (only excess above threshold)
-        bmi_excess = (df["bmi"].to_numpy(dtype=float) - params["bmi_threshold"]).clip(
-            min=0
-        )
+        bmi_excess = (df["bmi"].to_numpy(dtype=float) - params["bmi_threshold"]).clip(min=0)
         premium += bmi_excess * params["bmi_penalty"]
 
         # Children cost
         premium += df["children"].to_numpy(dtype=float) * params["children_cost"]
 
-        # Smoker×BMI×age interaction term (v6.3.4 — VH-ratio fix).
+        # Smoker×BMI×age interaction term (v6.3.4 — VH-ratio).
         # Applied BEFORE the smoker multiplier so the interaction is amplified
         # by smoker_multiplier × region_multiplier downstream — matching the
         # multiplicative structure of real synergistic risk.
@@ -2124,9 +2015,7 @@ class HybridPredictor:
             premium = np.where(smoker_mask.to_numpy(), premium + interaction, premium)
 
         # Smoker multiplier
-        premium = np.where(
-            smoker_mask.to_numpy(), premium * params["smoker_multiplier"], premium
-        )
+        premium = np.where(smoker_mask.to_numpy(), premium * params["smoker_multiplier"], premium)
 
         # Region multiplier (unknown regions default to 1.0)
         region_mult = (
@@ -2140,20 +2029,18 @@ class HybridPredictor:
         actuarial_preds = premium * region_mult
 
         # Validate actuarial predictions scale
-        is_valid, scale_msg = validate_prediction_scale(
-            actuarial_preds, scale_type="original"
-        )
+        is_valid, scale_msg = validate_prediction_scale(actuarial_preds, scale_type="original")
 
         if not is_valid:
             logger.error(f"Actuarial prediction scale issue: {scale_msg}")
         else:
             logger.debug(f"Actuarial predictions: {scale_msg}")
 
-        return actuarial_preds
+        return np.asarray(actuarial_preds)
 
     def _blend_predictions(
         self, ml_preds: np.ndarray, act_preds: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         """
         🆕 ENHANCED: Blend predictions with detailed diagnostics
 
@@ -2187,12 +2074,12 @@ class HybridPredictor:
             # Zone anchor stays on act_preds: consistent with the progress formula
             # below which also uses act_preds as its interpolation signal.
             #
-            # N7 FIX: `act_preds <= lower_bound` is evaluated independently of
+            # `act_preds <= lower_bound` is evaluated independently of
             # `above_threshold`, so when routing_signal >= threshold (above_threshold=True)
             # but act_preds <= lower_bound, the same policy was counted in BOTH
             # ml_only_count AND soft_blend_zone_count / actuarial_dominant_indices,
             # producing a self-contradictory blend_diagnostics dict.
-            # Fix: explicitly exclude above_threshold policies from below_lower so the
+            # explicitly exclude above_threshold policies from below_lower so the
             # three zones are always mutually exclusive and exhaustive.
             below_lower = (act_preds <= lower_bound) & ~above_threshold
             # Transition: in the window [lower_bound, threshold)
@@ -2248,7 +2135,7 @@ class HybridPredictor:
         final = np.maximum(final, ml_preds * min_floor)
 
         # ── Diagnostics ───────────────────────────────────────────────────────
-        # FIX U-04: cap index lists at _MAX_DIAG_INDICES to prevent O(N) JSON
+        # cap index lists at _MAX_DIAG_INDICES to prevent O(N) JSON
         # serialization overhead on every request.  For a 7701-row batch at 82%
         # ML routing, the uncapped ml_only_indices list holds ~6315 integers
         # (≈40KB JSON) serialized on every call — ~4MB/s at 100 req/s.
@@ -2275,14 +2162,14 @@ class HybridPredictor:
         input_data: pd.DataFrame,
         return_components: bool = False,
         return_reliability: bool = True,
-        _precomputed_ml_result: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        _precomputed_ml_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         🆕 ENHANCED: Generate hybrid predictions with tail risk monitoring
 
-        CRITICAL FIX in v6.3.1: Calibration can now be applied to ML-only or full hybrid
+        Calibration can now be applied to ML-only or full hybrid
 
-        FIX H7 (_precomputed_ml_result): When routes.py calls predict_with_intervals()
+        (_precomputed_ml_result): When routes.py calls predict_with_intervals()
         first (to obtain CI), it can pass the resulting dict here so the ML pipeline
         is not invoked a second time.  The parameter is intentionally private
         (underscore prefix) — it is an internal optimisation path, not public API.
@@ -2291,7 +2178,7 @@ class HybridPredictor:
         if input_data.empty:
             raise ValueError("Input data cannot be empty")
 
-        # FIX C1: read max_batch_size from the FULL pipeline config, not from
+        # read max_batch_size from the FULL pipeline config, not from
         # self.config (which is the hybrid_predictor sub-dict).
         # The key prediction.max_batch_size lives at the root of config.yaml;
         # self.config.get("prediction", {}) always returns {} and falls through
@@ -2307,10 +2194,10 @@ class HybridPredictor:
             )
 
         try:
-            # FIX H7: reuse precomputed ML result when available (e.g. supplied by
+            # reuse precomputed ML result when available (e.g. supplied by
             # routes.py predict_single after calling predict_with_intervals) to avoid
             # running feature engineering + XGBoost inference a second time.
-            # FIX U-07: validate shape before trusting the precomputed result.
+            # validate shape before trusting the precomputed result.
             # A stale or cached result with a different row count would produce a
             # silent shape mismatch in _blend_predictions (numpy broadcast failure).
             if _precomputed_ml_result is not None:
@@ -2338,7 +2225,7 @@ class HybridPredictor:
             else:
                 logger.debug(f"ML predictions validated: {scale_msg}")
 
-            # 🆕 CRITICAL FIX: Apply calibration to ML predictions BEFORE blending if configured
+            # Apply calibration to ML predictions BEFORE blending if configured
             if self.calibration_enabled and self.calibration_apply_to_ml_only:
                 ml_predictions_calibrated = ml_predictions * self.calibration_factor
                 logger.debug(
@@ -2383,11 +2270,9 @@ class HybridPredictor:
                 ml_predictions_calibrated, actuarial_predictions
             )
 
-            # 🆕 CRITICAL FIX: Apply calibration to FULL HYBRID only if not applied to ML-only
+            # Apply calibration to FULL HYBRID only if not applied to ML-only
             if self.calibration_enabled and not self.calibration_apply_to_ml_only:
-                hybrid_predictions_calibrated = (
-                    hybrid_predictions * self.calibration_factor
-                )
+                hybrid_predictions_calibrated = hybrid_predictions * self.calibration_factor
 
                 logger.debug(
                     f"Applied calibration to full hybrid: {self.calibration_factor:.4f}\n"
@@ -2397,9 +2282,7 @@ class HybridPredictor:
             else:
                 hybrid_predictions_calibrated = hybrid_predictions
                 if not self.calibration_enabled:
-                    logger.warning(
-                        "⚠️ Calibration disabled - predictions may be underpriced"
-                    )
+                    logger.warning("⚠️ Calibration disabled - predictions may be underpriced")
 
             # Validate final predictions
             is_valid_final, scale_msg_final = validate_prediction_scale(
@@ -2419,7 +2302,7 @@ class HybridPredictor:
             # For the high tier this can reach +30%+.  Validate the net factor
             # stays within the approved pricing governance range.
             #
-            # FIX U-02: compare hybrid vs ml_predictions_CALIBRATED (not raw).
+            # compare hybrid vs ml_predictions_CALIBRATED (not raw).
             # When apply_to_ml_only=True, calibration is already baked into
             # ml_predictions_calibrated before blending.  Dividing by raw
             # ml_predictions inflated _net_factor by calibration_factor on every
@@ -2429,8 +2312,7 @@ class HybridPredictor:
             _net_min = self.business_config.get("combined_correction_min", 0.65)
             _net_factor = float(
                 np.median(
-                    hybrid_predictions_calibrated
-                    / np.maximum(ml_predictions_calibrated, 1e-8)
+                    hybrid_predictions_calibrated / np.maximum(ml_predictions_calibrated, 1e-8)
                 )
             )
             if not (_net_min <= _net_factor <= _net_max):
@@ -2448,7 +2330,7 @@ class HybridPredictor:
                 "severe_underpricing_threshold_pct", 0.50
             )
 
-            # FIX C4: anchor safe_minimum on ML predictions, not actuarial.
+            # anchor safe_minimum on ML predictions, not actuarial.
             # The previous formula (actuarial * 0.5) produced false alarms for
             # low-value smoker policies where smoker_multiplier=3.5 inflates
             # actuarial far above the true charge (e.g. actuarial=$24K for a
@@ -2475,11 +2357,7 @@ class HybridPredictor:
                 severity = (
                     "CRITICAL"
                     if n_severe_underpricing > len(input_data) * 0.10
-                    else (
-                        "HIGH"
-                        if n_severe_underpricing > len(input_data) * 0.05
-                        else "MODERATE"
-                    )
+                    else ("HIGH" if n_severe_underpricing > len(input_data) * 0.05 else "MODERATE")
                 )
 
                 # 🆕 GOVERNANCE-APPROPRIATE WARNING
@@ -2514,13 +2392,13 @@ class HybridPredictor:
                     ),
                 }
 
-            # N2 FIX: The original code recomputed n_above / n_in_transition /
+            # The original code recomputed n_above / n_in_transition /
             # n_below_threshold directly from actuarial_predictions here, while
             # blend_diagnostics derives its counts from routing_signal (composite
             # 0.5 * ml + 0.5 * act) for above_threshold and from act_preds for
             # below_lower.  The two paths gave different numbers for the same batch,
             # so hybrid_info and blend_diagnostics were always self-contradictory.
-            # Fix: read counts from blend_diagnostics (single source of truth).
+            # read counts from blend_diagnostics (single source of truth).
             n_above = blend_diagnostics["ml_only_count"]
             n_in_transition = blend_diagnostics["transition_zone_count"]
             n_below_threshold = blend_diagnostics["soft_blend_zone_count"]
@@ -2573,9 +2451,7 @@ class HybridPredictor:
                             & (hybrid_predictions_calibrated < 15000)
                         )
                     ),
-                    "n_high_premium": int(
-                        np.sum(hybrid_predictions_calibrated >= 15000)
-                    ),
+                    "n_high_premium": int(np.sum(hybrid_predictions_calibrated >= 15000)),
                     "pct_low_premium": float(
                         np.sum(hybrid_predictions_calibrated < 5000)
                         / len(hybrid_predictions_calibrated)
@@ -2608,14 +2484,14 @@ class HybridPredictor:
 
             # Add component predictions if requested
             if return_components:
-                # ── BUG FIX (v6.3.2): compute TRUE uncalibrated blend ─────────────
+                # ── compute TRUE uncalibrated blend ─────────────
                 # When apply_to_ml_only=True, _blend_predictions() was called with
                 # ml_predictions_calibrated (already scaled up), so hybrid_predictions
                 # already contains the calibration effect.  Storing it as
                 # "uncalibrated_hybrid" caused evaluate.py to report $0 calibration
                 # impact (hybrid_preds - uncal == 0 identically).
                 #
-                # Fix: re-blend using the raw (uncalibrated) ml_predictions so the
+                # re-blend using the raw (uncalibrated) ml_predictions so the
                 # "uncalibrated_hybrid" key genuinely reflects what predictions would
                 # look like without calibration.  This is a reporting-only operation;
                 # it does not change any prediction logic or the final output.
@@ -2641,34 +2517,31 @@ class HybridPredictor:
 
             # Reliability flags
             if return_reliability:
-                extreme_threshold = int(self.ml_predictor.config.get("prediction", {}).get("extreme_prediction_threshold", 100_000))
+                extreme_threshold = int(
+                    self.ml_predictor.config.get("prediction", {}).get(
+                        "extreme_prediction_threshold", 100_000
+                    )
+                )
                 max_pred_val = np.max(hybrid_predictions_calibrated)
 
                 result["reliability"] = {
                     "has_extreme_predictions": bool(max_pred_val > extreme_threshold),
-                    "extreme_count": int(
-                        np.sum(hybrid_predictions_calibrated > extreme_threshold)
-                    ),
+                    "extreme_count": int(np.sum(hybrid_predictions_calibrated > extreme_threshold)),
                     "max_prediction": float(max_pred_val),
                     "hybrid_mode": "enabled",
                     "actuarial_rules_applied": n_below_threshold > 0,
                     "blending_method": "actuarial_threshold_based",
-                    "calibration_status": (
-                        "enabled" if self.calibration_enabled else "disabled"
-                    ),
+                    "calibration_status": ("enabled" if self.calibration_enabled else "disabled"),
                     "calibration_strategy": (
-                        "ML-only"
-                        if self.calibration_apply_to_ml_only
-                        else "Full hybrid"
+                        "ML-only" if self.calibration_apply_to_ml_only else "Full hybrid"
                     ),
-                    # N1 FIX: ml_result is fetched at line ~2109 with
+                    # ml_result is fetched at line ~2109 with
                     # return_reliability=False, so ml_result["reliability"] is absent
                     # and .get("bias_correction_applied", False) always returned False —
                     # even when bias correction was applied.
-                    # Fix: read the flag directly from the pipeline object, which is
+                    # read the flag directly from the pipeline object, which is
                     # always populated regardless of return_reliability.
-                    "ml_bias_correction": self.ml_predictor._bias_correction
-                    is not None,
+                    "ml_bias_correction": self.ml_predictor._bias_correction is not None,
                     "tail_risk_detected": tail_risk_warning is not None,
                     # Both flags are always present; only one is True at a time.
                     "actuarial_conservative": actuarial_vs_ml_ratio > 1.15,
@@ -2678,9 +2551,7 @@ class HybridPredictor:
                     # ML weight is much higher than blend_ratio because most premiums
                     # exceed the threshold and route to pure ML.
                     "configured_blend_ratio": self.blend_ratio,
-                    "effective_avg_ml_weight": float(
-                        blend_diagnostics["avg_ml_weight"]
-                    ),
+                    "effective_avg_ml_weight": float(blend_diagnostics["avg_ml_weight"]),
                 }
 
             # Drift monitoring (if enabled)
@@ -2722,9 +2593,7 @@ class HybridPredictor:
                 # unconditionally, so the counts always print 0 — which looks like a
                 # routing bug to an operator reading the log.  Add a mode tag to make
                 # it unambiguous that the zeros are intentional, not a failure.
-                _blend_mode_tag = (
-                    " [hard blend — N/A]" if not self.use_soft_blending else ""
-                )
+                _blend_mode_tag = " [hard blend — N/A]" if not self.use_soft_blending else ""
                 logger.info(
                     f"📊 Hybrid Prediction Summary:\n"
                     f"   Actuarial-dominant ({n_below_threshold}){_blend_mode_tag}: below transition window\n"
@@ -2763,17 +2632,15 @@ class HybridPredictor:
             children = int(children)
             bmi = float(bmi)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid numeric input: {e}")
+            raise ValueError(f"Invalid numeric input: {e}") from e
 
-        # ── F-08 FIX: single-record path reads same config bounds as batch path ──
+        # ── single-record path reads same config bounds as batch path ──
         # HybridPredictor.config holds only the hybrid_predictor subsection;
         # feature bounds live in the full pipeline config.
         _feat = self.ml_predictor.config.get("features", {})
         _age_min, _age_max = _feat.get("age_min", 0.0), _feat.get("age_max", 120.0)
         _bmi_min, _bmi_max = _feat.get("bmi_min", 10.0), _feat.get("bmi_max", 100.0)
-        _children_min, _children_max = _feat.get("children_min", 0), _feat.get(
-            "children_max", 20
-        )
+        _children_min, _children_max = _feat.get("children_min", 0), _feat.get("children_max", 20)
 
         if not _age_min <= age <= _age_max:
             raise ValueError(f"Age must be in [{_age_min}, {_age_max}], got {age}")
@@ -2800,11 +2667,11 @@ class HybridPredictor:
 
     def update_parameters(
         self,
-        threshold: Optional[float] = None,
-        blend_ratio: Optional[float] = None,
-        calibration_factor: Optional[float] = None,
-        calibration_apply_to_ml_only: Optional[bool] = None,
-        actuarial_params: Optional[Dict[str, Any]] = None,
+        threshold: float | None = None,
+        blend_ratio: float | None = None,
+        calibration_factor: float | None = None,
+        calibration_apply_to_ml_only: bool | None = None,
+        actuarial_params: dict[str, Any] | None = None,
     ):
         """
         🆕 ENHANCED: Update parameters with calibration strategy control
@@ -2825,7 +2692,7 @@ class HybridPredictor:
 
         if calibration_factor is not None:
             if calibration_factor <= 0:
-                raise ValueError(f"calibration_factor must be positive")
+                raise ValueError("calibration_factor must be positive")
             old_cal = self.calibration_factor
             self.calibration_factor = calibration_factor
             logger.warning(
@@ -2835,9 +2702,7 @@ class HybridPredictor:
 
         # 🆕 NEW: Allow updating calibration strategy
         if calibration_apply_to_ml_only is not None:
-            old_strategy = (
-                "ML-only" if self.calibration_apply_to_ml_only else "Full hybrid"
-            )
+            old_strategy = "ML-only" if self.calibration_apply_to_ml_only else "Full hybrid"
             new_strategy = "ML-only" if calibration_apply_to_ml_only else "Full hybrid"
             self.calibration_apply_to_ml_only = calibration_apply_to_ml_only
             logger.warning(
@@ -2847,11 +2712,9 @@ class HybridPredictor:
 
         if actuarial_params is not None:
             self.actuarial_params.update(actuarial_params)
-            logger.warning(
-                f"⚠️ Updated actuarial parameters: {list(actuarial_params.keys())}"
-            )
+            logger.warning(f"⚠️ Updated actuarial parameters: {list(actuarial_params.keys())}")
 
-    def get_config_summary(self) -> Dict[str, Any]:
+    def get_config_summary(self) -> dict[str, Any]:
         """Get current configuration"""
         return {
             "version": self.VERSION,
@@ -2875,9 +2738,7 @@ class HybridPredictor:
 if __name__ == "__main__":
     import logging
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
     print("\n" + "=" * 80)
     print("ENHANCED HYBRID PIPELINE v6.3.3")
@@ -2895,7 +2756,7 @@ if __name__ == "__main__":
         pipeline = PredictionPipeline()
 
         info = pipeline.get_pipeline_info()
-        print(f"\n✅ Pipeline Info:")
+        print("\n✅ Pipeline Info:")
         print(f"  Version: v{info['pipeline_version']}")
         print(f"  Model: {info['model_name']}")
         print(f"  Transform: {info['target_transformation']['method']}")
@@ -2922,11 +2783,9 @@ if __name__ == "__main__":
             }
         )
 
-        result = hybrid.predict(
-            test_data, return_components=True, return_reliability=True
-        )
+        result = hybrid.predict(test_data, return_components=True, return_reliability=True)
 
-        print(f"\n✅ Predictions Generated:")
+        print("\n✅ Predictions Generated:")
         print(f"  Batch size: {result['input_count']}")
         print(f"  Mean: ${result['statistics']['mean']:,.2f}")
         print(
@@ -2936,7 +2795,7 @@ if __name__ == "__main__":
         print(f"  Calibration strategy: {result['calibration_strategy']}")
 
         # Show blend diagnostics
-        print(f"\n  Blend Diagnostics:")
+        print("\n  Blend Diagnostics:")
         diag = result["blend_diagnostics"]
         print(f"    ML-only: {diag['ml_only_count']}")
         print(f"    Actuarial-dominant: {diag['actuarial_dominant_count']}")
@@ -2944,29 +2803,30 @@ if __name__ == "__main__":
         print(f"    Avg ML weight: {diag['avg_ml_weight']:.2f}")
 
         # Show actuarial conservativeness
-        # P2-3 FIX: ratio on n=3 is noise — suppress interpretation label below
+        # ratio on n=3 is noise — suppress interpretation label below
         # a minimum sample threshold; ratio is still printed for traceability.
         _n_for_ratio = result.get("input_count", 0)
         _MIN_RATIO_N = 30
-        print(f"\n  Actuarial Analysis:")
+        print("\n  Actuarial Analysis:")
         print(
             f"    Actuarial/ML ratio: {result['actuarial_conservativeness_ratio']:.2f}x"
-            + (f"  (ℹ️ n={_n_for_ratio} < {_MIN_RATIO_N} — ratio unreliable at this sample size)"
-               if _n_for_ratio < _MIN_RATIO_N else "")
+            + (
+                f"  (ℹ️ n={_n_for_ratio} < {_MIN_RATIO_N} — ratio unreliable at this sample size)"
+                if _n_for_ratio < _MIN_RATIO_N
+                else ""
+            )
         )
         if _n_for_ratio >= _MIN_RATIO_N and result["actuarial_conservativeness_ratio"] > 1.15:
-            print(f"    ⚠️ Actuarial appears conservative")
+            print("    ⚠️ Actuarial appears conservative")
 
         # Show tail risk status
         if result["tail_risk_warning"]:
             warning = result["tail_risk_warning"]
             print(f"\n  🔥 Tail Risk Warning ({warning['severity']}):")
-            print(
-                f"    Policies below threshold: {warning['policies_below_threshold']}"
-            )
+            print(f"    Policies below threshold: {warning['policies_below_threshold']}")
             print(f"    Avg gap: {warning['avg_gap_from_threshold_pct']:.1f}%")
         else:
-            print(f"\n  ✅ No tail risk warnings")
+            print("\n  ✅ No tail risk warnings")
 
         # Test confidence intervals
         print("\n[4/6] Testing Confidence Intervals (C1 — Heteroscedastic)...")
@@ -2974,13 +2834,13 @@ if __name__ == "__main__":
 
         if ci_result.get("confidence_intervals"):
             ci = ci_result["confidence_intervals"]
-            print(f"✅ Confidence intervals computed:")
+            print("✅ Confidence intervals computed:")
             print(f"  Confidence level: {ci['confidence_level']*100:.0f}%")
             print(f"  Mean interval width: ${ci['mean_interval_width']:,.2f}")
             print(f"  Method: {ci['method']}")
             print(f"  Note: {ci.get('note', 'N/A')}")
         else:
-            print(f"⚠️ Confidence intervals not available")
+            print("⚠️ Confidence intervals not available")
 
         # Test calibration strategy update
         print("\n[5/6] Testing Calibration Strategy Update...")
@@ -2988,7 +2848,7 @@ if __name__ == "__main__":
         original_strategy = config_summary["calibration_apply_to_ml_only"]
         print(f"Current strategy (apply_to_ml_only): {original_strategy}")
 
-        # ── FIX Issue 4: toggle the attribute directly rather than via
+        # ── toggle the attribute directly rather than via
         #    update_parameters() or deepcopy().
         #
         #    deepcopy(hybrid) fails because HybridPredictor contains a
@@ -3006,9 +2866,7 @@ if __name__ == "__main__":
             not original_strategy
         ), "Strategy update failed"
         hybrid.calibration_apply_to_ml_only = original_strategy
-        assert (
-            hybrid.calibration_apply_to_ml_only == original_strategy
-        ), "Strategy restore failed"
+        assert hybrid.calibration_apply_to_ml_only == original_strategy, "Strategy restore failed"
         print(
             f"✅ Calibration strategy round-trip verified: {original_strategy} → "
             f"{not original_strategy} → {original_strategy}"
@@ -3037,12 +2895,8 @@ if __name__ == "__main__":
         print("  9. ✅ Calibration dispatch on model objective, not name [H2]")
 
         print("\n📋 Configuration Guidance:")
-        print(
-            "  • Set 'calibration.apply_to_ml_only: true' if actuarial is conservative"
-        )
-        print(
-            "  • Set 'calibration.apply_to_ml_only: false' if actuarial is competitive"
-        )
+        print("  • Set 'calibration.apply_to_ml_only: true' if actuarial is conservative")
+        print("  • Set 'calibration.apply_to_ml_only: false' if actuarial is competitive")
         print("  • Monitor actuarial/ML ratio to detect conservativeness")
         print("  • Review tail risk warnings with pricing governance team")
 

@@ -32,7 +32,6 @@ import pytest
 
 from insurance_ml.features import BiasCorrection, FeatureEngineeringConfig
 
-
 # ===========================================================================
 # BiasCorrection — 2-tier apply
 # ===========================================================================
@@ -83,16 +82,14 @@ class TestBiasCorrectionApply2Tier:
         assert result.shape == (1,)
         assert result[0] > 0
 
-    def test_routing_uses_y_original_not_y_pred(
-        self, bc_2tier: BiasCorrection
-    ) -> None:
+    def test_routing_uses_y_original_not_y_pred(self, bc_2tier: BiasCorrection) -> None:
         """
         Tier routing is driven by y_original (ground-truth signal at eval time).
         A prediction that is above threshold but whose y_original is below
         threshold should receive the LOW factor.
         """
-        pred = np.array([20000.0])    # above threshold → would normally get high
-        y_orig = np.array([5000.0])   # below threshold → should drive low routing
+        pred = np.array([20000.0])  # above threshold → would normally get high
+        y_orig = np.array([5000.0])  # below threshold → should drive low routing
 
         result = bc_2tier.apply(y_pred=pred, y_original=y_orig)
         factor_low = math.exp(bc_2tier.var_low / 2.0)
@@ -247,9 +244,7 @@ class TestBiasCorrectionSerialization:
         assert d["var_high"] == bc_2tier.var_high
         assert d["threshold"] == bc_2tier.threshold
 
-    def test_3tier_to_dict_includes_extra_fields(
-        self, bc_3tier: BiasCorrection
-    ) -> None:
+    def test_3tier_to_dict_includes_extra_fields(self, bc_3tier: BiasCorrection) -> None:
         d = bc_3tier.to_dict()
         assert "var_mid" in d
         assert "threshold_low" in d

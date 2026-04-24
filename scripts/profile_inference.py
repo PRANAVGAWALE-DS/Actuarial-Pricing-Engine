@@ -35,8 +35,8 @@ _SRC_DIR = _PROJECT_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-import numpy as np
-import pandas as pd
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Monkey-patch timing hooks onto the hot-path methods BEFORE importing them.
@@ -61,8 +61,8 @@ def _timed(label: str, fn, *args, **kwargs):
 print("Loading insurance_ml modules...", flush=True)
 t_import_start = time.perf_counter()
 
-from insurance_ml.config import load_config
-from insurance_ml.predict import HybridPredictor, PredictionPipeline
+from insurance_ml.config import load_config  # noqa: E402
+from insurance_ml.predict import HybridPredictor, PredictionPipeline  # noqa: E402
 
 t_import_end = time.perf_counter()
 print(f"  Module import: {t_import_end - t_import_start:.3f}s\n")
@@ -77,7 +77,6 @@ _orig_pp_predict = PredictionPipeline.predict
 
 def _patched_preprocess(self, input_data):
     # 1a. transform_pipeline is the key suspect — time it separately
-    required_cols = ["age", "sex", "bmi", "children", "smoker", "region"]
     df = input_data.copy()
     try:
         df["age"] = pd.to_numeric(df["age"], errors="coerce")
@@ -125,7 +124,6 @@ def _patched_pp_predict(self, input_data, return_reliability=True):
 
     # --- inverse transform ---
     t = time.perf_counter()
-    from insurance_ml.predict import validate_prediction_scale
 
     predictions_original = self.feature_engineer.inverse_transform_target(
         predictions_raw,
@@ -223,9 +221,7 @@ def init_pipeline():
     preprocessor_path = os.getenv("PREPROCESSOR_PATH")
     if preprocessor_path is None:
         matches = sorted(glob.glob(f"{model_path}/preprocessor_v*.joblib"), reverse=True)
-        preprocessor_path = (
-            matches[0] if matches else f"{model_path}/preprocessor_v5.2.0.joblib"
-        )
+        preprocessor_path = matches[0] if matches else f"{model_path}/preprocessor_v5.2.0.joblib"
 
     pipeline = PredictionPipeline(model_dir=model_path, preprocessor_path=preprocessor_path)
     predictor = HybridPredictor(ml_predictor=pipeline)
@@ -301,7 +297,7 @@ def main():
     # ── 3. Warm runs ──────────────────────────────────────────────────────
     walls = []
     all_timings = []
-    for i in range(args.n_runs):
+    for _i in range(args.n_runs):
         w, _, t = run_timed_predict(predictor, TEST_ROW)
         walls.append(w)
         all_timings.append(t)

@@ -83,7 +83,7 @@ class PerformanceSnapshot:
 
 def _se_of_mean(baseline_std: float, n: int) -> float:
     """Standard error of the sample mean under H0 (same distribution)."""
-    return baseline_std / (max(n, 1) ** 0.5)
+    return float(baseline_std / (max(n, 1) ** 0.5))
 
 
 def _z_score(new_mean: float, baseline_mean: float, se: float) -> float:

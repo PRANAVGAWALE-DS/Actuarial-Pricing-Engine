@@ -216,10 +216,6 @@ class BiasCorrection:
         ...     bc = BiasCorrection.from_dict(json.load(f))
     """
 
-    # ML-08 FIX: Add __version__ for cross-module serialisation validation.
-    # When a preprocessor containing this class is deserialised, callers can
-    # check that the loaded object's __version__ matches the current one to
-    # detect interface mismatches (e.g. missing get_hash / 3-tier attrs).
     __version__ = "1.1"
 
     var_low: float
@@ -253,7 +249,7 @@ class BiasCorrection:
                     f"threshold_low ({self.threshold_low}) must be < "
                     f"threshold_high ({self.threshold_high})"
                 )
-            if self.var_mid == 0 or not _m.isfinite(self.var_mid):  # type: ignore[operator]
+            if self.var_mid == 0 or not _m.isfinite(self.var_mid):  # type: ignore[arg-type]
                 raise ValueError(f"var_mid must be non-zero and finite, got {self.var_mid}")
         # In 3-tier mode threshold is a dummy sentinel; routing uses threshold_low/high.
         elif self.threshold <= 0:
@@ -307,7 +303,7 @@ class BiasCorrection:
         3. **Legacy** — raw FeatureEngineer attrs before BiasCorrection existed:
               {"_bias_var_low": …, "_bias_var_high": …, "_bias_threshold": …}
         """
-        # ── BUG-6 FIX (v7.5.0): Unwrap BiasCorrectionArtifact wrapper ──────
+        # Unwrap BiasCorrectionArtifact wrapper ──────
         # always_write_bias_correction() wraps the correction inside a
         # BiasCorrectionArtifact dataclass via asdict():
         #   {"applied": bool, "reason": str, "correction_params": {…}, …}
@@ -414,7 +410,7 @@ class BiasCorrection:
             high_mask = y_routing >= self.threshold_high
 
             factor_low = float(np.exp(self.var_low / 2.0))
-            factor_mid = float(np.exp(self.var_mid / 2.0))  # type: ignore[arg-type]
+            factor_mid = float(np.exp(self.var_mid / 2.0))  # type: ignore[operator]
             factor_high = float(np.exp(self.var_high / 2.0))
 
             y_corrected[low_mask] *= factor_low
@@ -435,7 +431,7 @@ class BiasCorrection:
     def get_hash(self) -> str:
         """Generate deterministic hash for caching and serialisation validation.
 
-        ML-08 FIX: Added to match the train.py BiasCorrection interface.
+        Added to match the train.py BiasCorrection interface.
         Preprocessors serialised with this class can now call get_hash() without
         AttributeError at inference time.
         """
@@ -448,7 +444,7 @@ class BiasCorrection:
                 f"3tier_{self.var_low:.10f}_{self.var_mid:.10f}_{self.var_high:.10f}_"
                 f"{self.threshold_low:.4f}_{self.threshold_high:.4f}"
             )
-        return _hl.md5(state_str.encode()).hexdigest()[:8]
+        return _hl.md5(state_str.encode(), usedforsecurity=False).hexdigest()[:8]
 
 
 # ============================================================================
@@ -511,14 +507,14 @@ class FeatureEngineer:
 
         # Target transformation
         self.target_transformation = TargetTransformation(method="none")
-        self.target_min_ = None
-        self.target_max_ = None
-        self.transformed_min_ = None
-        self.transformed_max_ = None
+        self.target_min_: float | None = None
+        self.target_max_: float | None = None
+        self.transformed_min_: float | None = None
+        self.transformed_max_: float | None = None
 
         # Scaling
         self.scaler = StandardScaler()
-        self._continuous_features = []
+        self._continuous_features: list[str] = []
 
         # Encoding (immutable snapshots)
         self.label_encoders: dict[str, LabelEncoder] = {}
@@ -928,7 +924,7 @@ class FeatureEngineer:
 
                 y_range = original_range or (self.target_min_, self.target_max_)
 
-                # ── F-05 FIX: Write canonical lambda_param AND deprecated boxcox_lambda ──
+                # Write canonical lambda_param AND deprecated boxcox_lambda ──
                 # lambda_param is the canonical field per shared.py TargetTransformation.
                 # boxcox_lambda is the deprecated alias kept for backward-compat with
                 # models serialized before this change. Both must be set so that:
@@ -1058,13 +1054,12 @@ class FeatureEngineer:
         # Validate BMI range (from config)
         if df["bmi"].isna().any():
             raise ValueError(f"❌ Found {df['bmi'].isna().sum()} NaN values in BMI")
-        # ── BUG 5 FIX ──────────────────────────────────────────────────────
         # Original: (df["bmi"] <= self.config.bmi_min).any()
         #   This rejects BMI == bmi_min (e.g. bmi_min=10.0 would reject BMI=10.0).
         #   predict.py uses strict-less-than for the same check, and the error
         #   message printed the range as "(bmi_min, bmi_max]" (half-open).
         #
-        # Fix: use strict-less-than so bmi_min itself is a valid value,
+        # use strict-less-than so bmi_min itself is a valid value,
         # making the accepted range [bmi_min, bmi_max] (closed both ends).
         # This is consistent with predict.py and avoids rejecting valid edge cases.
         if (df["bmi"] < self.config.bmi_min).any() or (df["bmi"] > self.config.bmi_max).any():
@@ -1106,8 +1101,8 @@ class FeatureEngineer:
         df["smoker"].map(self.config.smoker_risk_map)
 
         # Risk scores
-        bmi_risk = pd.cut(df["bmi"], bins=[0, 25, 30, float("inf")], labels=[0, 1, 2]).astype(int)
-        age_risk = pd.cut(df["age"], bins=[0, 40, 60, float("inf")], labels=[0, 1, 2]).astype(int)
+        pd.cut(df["bmi"], bins=[0, 25, 30, float("inf")], labels=[0, 1, 2]).astype(int)
+        pd.cut(df["age"], bins=[0, 40, 60, float("inf")], labels=[0, 1, 2]).astype(int)
         df["unified_risk_score"] = (
             (df["age"] / 64) * 0.2  # Age component
             + (df["bmi"] / 50) * 0.2  # BMI component
@@ -1128,7 +1123,7 @@ class FeatureEngineer:
         df["is_senior"] = (df["age"] >= 65).astype(int)
         df["high_bmi"] = (df["bmi"] > 30).astype(int)
         df["smoker_senior"] = smoker_binary * df["is_senior"]
-        # SMOKER_CHILDREN FIX (Issue D): Without the +1 shift, any smoker with
+        # Without the +1 shift, any smoker with
         # children=0 gets smoker_children=0 — the same value as every non-smoker.
         # This nullifies the smoker signal for ~35% of smokers who have no children
         # and is the primary driver of Sample 22's $17 k miss (actual=$30,064,
@@ -1205,7 +1200,7 @@ class FeatureEngineer:
         # ============================================================
 
         # Compound risk for non-smokers
-        # ML-07 FIX: clip each factor to [0, ∞) before multiplying.
+        # clip each factor to [0, ∞) before multiplying.
         # For age < 25: (age-25)/50 < 0; for BMI < 18: (bmi-18)/35 < 0.
         # A negative × positive product yields a negative "risk", which is
         # semantically invalid and confuses both tree and linear models.
@@ -1275,7 +1270,7 @@ class FeatureEngineer:
         ).astype(int)
 
         # Age-based cost floor (younger = lower minimum)
-        # PA-04 FIX: Read dollar thresholds from config instead of hardcoding.
+        # Read dollar thresholds from config instead of hardcoding.
         # Hardcoded values (1500, 2500, 4000) violate SSOT and drift with inflation.
         # Config path: features.premium_tier.age_cost_floors / age_breakpoints.
         # Falls back to original values if not configured (backward-compatible).
@@ -1350,7 +1345,7 @@ class FeatureEngineer:
         # ------------------------------------------------------------
         # 6. EXTREME BMI × SMOKER × MID-AGE BINARY FLAG
         # ------------------------------------------------------------
-        # NEW ISSUE B FIX: The model's worst misses (e.g. Sample 22:
+        # The model's worst misses (e.g. Sample 22:
         # actual=$30,064, predicted=$12,538) involve smokers with BMI>35
         # aged 45+.  Existing continuous features such as
         # high_bmi_age_acceleration give a graded signal, but XGBoost can
@@ -1378,9 +1373,9 @@ class FeatureEngineer:
         self._update_state(PipelineState.FEATURES_CREATED)
 
         logger.info(f"Created base features. Shape: {df.shape}")
-        logger.info(f"   ✅ Added 15 optimized high-value features (non-redundant)")
-        logger.info(f"   ✅ Added 3 low-risk profile features for improved predictions")
-        logger.info(f"   ✅ Used config.yaml encoding maps for smoker features")
+        logger.info("   ✅ Added 15 optimized high-value features (non-redundant)")
+        logger.info("   ✅ Added 3 low-risk profile features for improved predictions")
+        logger.info("   ✅ Used config.yaml encoding maps for smoker features")
 
         return df
 
@@ -1492,7 +1487,6 @@ class FeatureEngineer:
             if self.outlier_detector is None:
                 return df, y, None
 
-            # ── BUG 2 FIX ────────────────────────────────────────────────────
             # Original code: self.outlier_detector.predict(df[numeric_cols])
             #   numeric_cols = df.select_dtypes(include=[np.number]).columns
             #   i.e. derived from the *current* DataFrame.
@@ -1504,7 +1498,7 @@ class FeatureEngineer:
             # or variance removal), predict() would receive the wrong number of
             # features and silently produce garbage or raise a ValueError.
             #
-            # Fix: use the stored fit-time feature list.  Fall back to
+            # use the stored fit-time feature list.  Fall back to
             # numeric_cols only when the stored list is absent (legacy artifact).
             if hasattr(self, "_outlier_numeric_features") and self._outlier_numeric_features:
                 _outlier_cols = [c for c in self._outlier_numeric_features if c in df.columns]
@@ -1554,12 +1548,16 @@ class FeatureEngineer:
                 self.variance_selector.fit(df[numeric_cols])
                 selected_mask = self.variance_selector.get_support()
                 selected_features = [
-                    col for col, selected in zip(numeric_cols, selected_mask) if selected
+                    col
+                    for col, selected in zip(numeric_cols, selected_mask, strict=False)
+                    if selected
                 ]
                 self._variance_feature_names_snapshot = tuple(selected_features)
 
                 dropped_features = [
-                    col for col, selected in zip(numeric_cols, selected_mask) if not selected
+                    col
+                    for col, selected in zip(numeric_cols, selected_mask, strict=False)
+                    if not selected
                 ]
                 if dropped_features:
                     df_result = df_result.drop(columns=dropped_features)
@@ -1571,7 +1569,7 @@ class FeatureEngineer:
                 logger.error(f"Variance filtering failed: {e}", exc_info=True)
                 raise RuntimeError(f"Variance filtering failed: {e}") from e
         else:
-            if self.variance_selector is None:
+            if self.variance_selector is None or self._variance_feature_names_snapshot is None:
                 raise RuntimeError("VarianceThreshold not fitted. Call with fit=True first.")
 
             dropped_features = [
@@ -1754,7 +1752,7 @@ class FeatureEngineer:
         #   high_bmi_age_acceleration. Domain knowledge warrants keeping it.
         # smoker_children: 29.3% SHAP importance (run 4 top feature) — must
         #   survive VIF even after the +1 shift changes its correlation profile.
-        # ── BUG-4 FIX (v7.5.0) ────────────────────────────────────────────
+
         # age_severity_interaction and smoker_adjusted_bmi are critical for the
         # high-value segment (R² = -2.15 without them). VIF at threshold=5 was
         # stripping both due to collinearity with nonsmoker_age_bmi_quad and bmi.
@@ -1775,8 +1773,8 @@ class FeatureEngineer:
             "sex",
             "smoker_extreme_bmi_age",
             "smoker_children",
-            "age_severity_interaction",  # BUG-4 FIX: critical for high-value R²
-            "smoker_adjusted_bmi",  # BUG-4 FIX: non-redundant smoker × BMI signal
+            "age_severity_interaction",
+            "smoker_adjusted_bmi",
             "age_bmi_stress",
         }
 
@@ -2113,7 +2111,7 @@ class FeatureEngineer:
                 f"Skipping polynomial feature generation."
             )
             if fit:
-                self._poly_continuous_features_snapshot = tuple()
+                self._poly_continuous_features_snapshot = ()
                 self._poly_feature_names_snapshot = tuple(continuous_features)
             return df_with_poly
 
@@ -2129,7 +2127,7 @@ class FeatureEngineer:
             # Respect explicit max features limit from config
             max_poly_features = getattr(self.config, "max_polynomial_features", 200)
 
-            # OT-05 FIX: use interaction_only=True to reduce feature explosion.
+            # use interaction_only=True to reduce feature explosion.
             # The previous value (False) generated full polynomial expansions
             # including x², x³ etc., contradicting the inline comment and
             # wasting memory with ~22% more features before the cap is applied.
@@ -2220,7 +2218,7 @@ class FeatureEngineer:
 
                     # Log top 5 selected features
                     top_5_vars = sorted(
-                        zip(selected_poly_names, poly_variances[top_rel_idxs]),
+                        zip(selected_poly_names, poly_variances[top_rel_idxs], strict=False),
                         key=lambda x: x[1],
                         reverse=True,
                     )[:5]
@@ -2282,6 +2280,8 @@ class FeatureEngineer:
                 df[list(self._poly_continuous_features_snapshot)]
             )
 
+            if self._poly_feature_names_snapshot is None:
+                return df_with_poly
             new_poly_names = [
                 name
                 for name in self._poly_feature_names_snapshot
@@ -2429,7 +2429,7 @@ class FeatureEngineer:
                 raise RuntimeError(
                     "❌ Continuous features not defined!\n"
                     "   This preprocessor may have been fitted with an older version.\n"
-                    "   ✅ FIX: Retrain preprocessor with current version"
+                    "  Retrain preprocessor with current version"
                 )
 
             continuous_cols = self._continuous_features
@@ -2440,8 +2440,7 @@ class FeatureEngineer:
 
             if not hasattr(self.scaler, "mean_"):
                 raise RuntimeError(
-                    "❌ StandardScaler not fitted!\n"
-                    "   ✅ FIX: Call scale_features() with fit=True first"
+                    "❌ StandardScaler not fitted!\n" "   Call scale_features() with fit=True first"
                 )
 
             # ----------------------------------------
@@ -2492,7 +2491,7 @@ class FeatureEngineer:
                 if expected_order != actual_order:
                     # Find mismatches
                     order_diffs = []
-                    for i, (exp, act) in enumerate(zip(expected_order, actual_order)):
+                    for i, (exp, act) in enumerate(zip(expected_order, actual_order, strict=False)):
                         if exp != act:
                             order_diffs.append(f"Position {i}: expected '{exp}', got '{act}'")
 
@@ -2506,16 +2505,16 @@ class FeatureEngineer:
                         f"   Mismatches:\n"
                         + "\n".join(f"   - {diff}" for diff in order_diffs[:5])
                         + "\n"
-                        f"\n"
-                        f"   🔍 DIAGNOSIS:\n"
-                        f"   → _continuous_features order doesn't match scaler training\n"
-                        f"   → Feature engineering step changed column order\n"
-                        f"   → Preprocessor corrupted or version mismatch\n"
-                        f"\n"
-                        f"   ✅ FIX:\n"
-                        f"   1. Retrain preprocessor to reset feature order\n"
-                        f"   2. Ensure deterministic feature engineering\n"
-                        f"   3. Verify saved preprocessor version matches current code"
+                        "\n"
+                        "   🔍 DIAGNOSIS:\n"
+                        "   → _continuous_features order doesn't match scaler training\n"
+                        "   → Feature engineering step changed column order\n"
+                        "   → Preprocessor corrupted or version mismatch\n"
+                        "\n"
+                        "   ✅ FIX:\n"
+                        "   1. Retrain preprocessor to reset feature order\n"
+                        "   2. Ensure deterministic feature engineering\n"
+                        "   3. Verify saved preprocessor version matches current code"
                     )
 
                 logger.debug(
@@ -2675,7 +2674,7 @@ class FeatureEngineer:
             if clip_to_safe_range and hasattr(self, "y_min_safe") and hasattr(self, "y_max_safe"):
                 y_original = np.clip(y_original, self.y_min_safe, self.y_max_safe)
 
-            return y_original
+            return np.asarray(y_original)
 
         # ========================================
         # YEO-JOHNSON
@@ -2694,13 +2693,13 @@ class FeatureEngineer:
             if clip_to_safe_range and hasattr(self, "y_min_safe") and hasattr(self, "y_max_safe"):
                 y_original = np.clip(y_original, self.y_min_safe, self.y_max_safe)
 
-            return y_original
+            return np.asarray(y_original)
 
         # ========================================
         # BOX-COX
         # ========================================
         elif transformation_method.startswith("boxcox") or transformation_method == "boxcox":
-            # ── F-05 FIX: Read canonical field; fall back to deprecated alias ──
+            # Read canonical field; fall back to deprecated alias ──
             # Allows loading of models serialized before the lambda_param migration.
             lambda_ = getattr(self.target_transformation, "lambda_param", None) or getattr(
                 self.target_transformation, "boxcox_lambda", None
@@ -2722,7 +2721,7 @@ class FeatureEngineer:
             if clip_to_safe_range and hasattr(self, "y_min_safe") and hasattr(self, "y_max_safe"):
                 y_original = np.clip(y_original, self.y_min_safe, self.y_max_safe)
 
-            return y_original
+            return np.asarray(y_original)
 
         else:
             raise ValueError(f"Unknown transformation method: {transformation_method}")
@@ -2792,7 +2791,7 @@ class FeatureEngineer:
             df_variance_filtered_pre = self.remove_low_variance(df_imputed, fit=True)
 
         with self._timed_step("Encode features"):
-            # ML-03 FIX: encode_features() must run BEFORE detect_and_remove_outliers().
+            # encode_features() must run BEFORE detect_and_remove_outliers().
             # IsolationForest requires an all-numeric input matrix.  Running it on
             # pre-encoded data that still contains string or label-encoded ordinal
             # categoricals (smoker, sex, region) corrupts anomaly scores because
@@ -2809,6 +2808,7 @@ class FeatureEngineer:
                 df_clean, y_clean = df_encoded_pre, y
                 self._update_state(PipelineState.OUTLIERS_DETECTED)
 
+        assert y_clean is not None, "y_clean is None after outlier step — unexpected"
         self._original_y_train_stats = {
             "mean": float(y_clean.mean()),
             "std": float(y_clean.std()),
@@ -2826,7 +2826,7 @@ class FeatureEngineer:
             )
 
         with self._timed_step("Remove low variance (post-encode)"):
-            # ML-03 FIX: Run VIF/variance filter on the already-encoded df_clean.
+            # Run VIF/variance filter on the already-encoded df_clean.
             # The pre-encode step above only did a lightweight pass; this is the
             # definitive variance filter on the fully-numeric feature matrix.
             df_variance_filtered = self.remove_low_variance(df_clean, fit=True)
@@ -2846,7 +2846,7 @@ class FeatureEngineer:
 
         with self._timed_step("Remove multicollinear features"):
             if remove_collinear:
-                # ML-05 FIX: pass y_clean (original-scale target) as y_original for
+                # pass y_clean (original-scale target) as y_original for
                 # correlation-based tie-breaking.  Ranking features by correlation with
                 # the transformed target can prefer different features than the original
                 # scale would, particularly for non-linearly-transformed targets.
@@ -2865,7 +2865,7 @@ class FeatureEngineer:
             # For bias correction, we need residuals in log space
             # This will be calculated after initial model fit in train.py
             # For now, store a placeholder
-            self._log_residual_variance = None
+            self._log_residual_variance: float | None = None
             logger.info(
                 "✅ Bias correction setup ready (variance will be calculated after model fit)"
             )
@@ -2905,9 +2905,9 @@ class FeatureEngineer:
             evaluation metrics.  Omitting this produces RMSE/MAE values that are
             orders of magnitude larger than training-time metrics.
 
-            ML-09 FIX: Docstring and pipeline step order updated to match the
-            corrected fit_transform_pipeline() (ML-03 fix moved outlier detection
-            to after encode_features). The inference path now mirrors training:
+            Docstring and pipeline step order updated to match the
+            corrected fit_transform_pipeline()
+            The inference path now mirrors training:
             impute → variance filter → encode → outlier removal → downstream steps.
 
         Returns:
@@ -2960,7 +2960,7 @@ class FeatureEngineer:
         df_features = self.create_features(df)
         df_imputed = self.impute_features(df_features, fit=False)
 
-        # ML-03 FIX (inference path): encode BEFORE outlier removal to match
+        # (inference path): encode BEFORE outlier removal to match
         # the corrected fit_transform_pipeline() ordering.  IsolationForest was
         # fitted on encoded (numeric-only) data, so it must be applied to encoded
         # data at inference too.
@@ -3088,7 +3088,8 @@ class FeatureEngineer:
         log_residuals = np.log1p(y_train_safe) - np.log1p(y_pred_safe)
 
         # Global variance — used by predict_with_intervals() for CI width
-        self._log_residual_variance = float(np.var(log_residuals, ddof=1))
+        _global_var = float(np.var(log_residuals, ddof=1))
+        self._log_residual_variance = _global_var
 
         # Tier threshold — default to median for a balanced split
         _threshold = float(threshold) if threshold is not None else float(np.median(y_train))
@@ -3097,14 +3098,10 @@ class FeatureEngineer:
         high_mask = ~low_mask
 
         _var_low = (
-            float(np.var(log_residuals[low_mask], ddof=1))
-            if low_mask.sum() > 1
-            else self._log_residual_variance
+            float(np.var(log_residuals[low_mask], ddof=1)) if low_mask.sum() > 1 else _global_var
         )
         _var_high = (
-            float(np.var(log_residuals[high_mask], ddof=1))
-            if high_mask.sum() > 1
-            else self._log_residual_variance
+            float(np.var(log_residuals[high_mask], ddof=1)) if high_mask.sum() > 1 else _global_var
         )
 
         self._bias_var_low = _var_low
@@ -3216,8 +3213,8 @@ class FeatureEngineer:
                 )
 
         elif transformation_method.startswith("boxcox"):
-            # ── BUG 7 FIX: check lambda_param (canonical) OR boxcox_lambda (deprecated) ──
-            # post-F05 fix both are written; legacy models only have boxcox_lambda.
+            # check lambda_param (canonical) OR boxcox_lambda (deprecated) ──
+            # legacy models only have boxcox_lambda.
             _bc_lambda = getattr(self.target_transformation, "lambda_param", None) or getattr(
                 self.target_transformation, "boxcox_lambda", None
             )
@@ -3459,7 +3456,7 @@ class FeatureEngineer:
         state_value = preprocessor.get("pipeline_state", "initialized")
         self._state = PipelineState(state_value)
 
-        # ── FIX 1: State inference ────────────────────────────────────────────
+        # State inference ────────────────────────────────────────────
         # Artifacts serialized by older versions of this class (before the
         # _update_state() backward-transition guard was added) may record an
         # incomplete state value even though all fitters are present and the
@@ -3524,12 +3521,12 @@ class FeatureEngineer:
         # ========================================
         if not hasattr(self.scaler, "mean_"):
             raise ValueError(
-                f"❌ SCALER NOT FITTED!\n"
-                f"\n"
-                f"   StandardScaler is missing 'mean_' attribute.\n"
-                f"   This indicates the scaler was never trained.\n"
-                f"\n"
-                f"   ✅ FIX: Retrain preprocessor from scratch."
+                "❌ SCALER NOT FITTED!\n"
+                "\n"
+                "   StandardScaler is missing 'mean_' attribute.\n"
+                "   This indicates the scaler was never trained.\n"
+                "\n"
+                "   ✅ FIX: Retrain preprocessor from scratch."
             )
 
         # Validate scaler feature count matches continuous features
@@ -3579,29 +3576,29 @@ class FeatureEngineer:
         elif transformation_method == "yeo-johnson":
             if self.yeo_johnson_transformer is None:
                 raise ValueError(
-                    f"❌ Yeo-Johnson transformer missing!\n"
-                    f"   inverse_transform() will fail.\n"
-                    f"   ✅ FIX: Retrain preprocessor."
+                    "❌ Yeo-Johnson transformer missing!\n"
+                    "   inverse_transform() will fail.\n"
+                    "   ✅ FIX: Retrain preprocessor."
                 )
 
             # Validate lambda exists
             if not hasattr(self.yeo_johnson_transformer, "lambdas_"):
                 raise ValueError(
-                    f"❌ Yeo-Johnson transformer not fitted (missing lambdas_)!\n"
-                    f"   ✅ FIX: Retrain preprocessor."
+                    "❌ Yeo-Johnson transformer not fitted (missing lambdas_)!\n"
+                    "   ✅ FIX: Retrain preprocessor."
                 )
 
         elif transformation_method.startswith("boxcox"):
-            # ── BUG 7 FIX: check lambda_param (canonical) OR boxcox_lambda (deprecated) ──
+            # check lambda_param (canonical) OR boxcox_lambda (deprecated) ──
             _bc_lambda = getattr(self.target_transformation, "lambda_param", None) or getattr(
                 self.target_transformation, "boxcox_lambda", None
             )
             if _bc_lambda is None:
                 raise ValueError(
-                    f"❌ Box-Cox lambda missing!\n"
-                    f"   Neither lambda_param nor boxcox_lambda is set.\n"
-                    f"   inverse_transform() will fail.\n"
-                    f"   ✅ FIX: Retrain preprocessor."
+                    "❌ Box-Cox lambda missing!\n"
+                    "   Neither lambda_param nor boxcox_lambda is set.\n"
+                    "   inverse_transform() will fail.\n"
+                    "   ✅ FIX: Retrain preprocessor."
                 )
 
         # ========================================
@@ -3620,7 +3617,7 @@ class FeatureEngineer:
             logger.info(f"  - Target range: [{self.target_min_:.2f}, {self.target_max_:.2f}]")
 
         if self._log_residual_variance is not None:
-            # ── FIX 2: Sentinel guard ─────────────────────────────────────────
+            # Sentinel guard ─────────────────────────────────────────
             # Three distinct cases for _log_residual_variance:
             #
             # Case A — NEGATIVE value (e.g. -0.162753):
@@ -3688,14 +3685,13 @@ class FeatureEngineer:
             },
             "target_transformation": {
                 "method": self.target_transformation.method,
-                # ── BUG 3 FIX ──────────────────────────────────────────────
                 # Original: only returned boxcox_lambda — which is None for
                 # yeo-johnson models (those use lambda_param only).  Callers
                 # inspecting this metadata to get the lambda would silently
                 # receive None for every yeo-johnson model.
                 #
-                # Fix: return the canonical lambda_param field (set for both
-                # boxcox and yeo-johnson post F-05 fix), plus boxcox_lambda for
+                # return the canonical lambda_param field (set for both
+                # boxcox and yeo-johnson), plus boxcox_lambda for
                 # backward compatibility with callers that pre-date the migration.
                 "lambda_param": self.target_transformation.lambda_param,
                 "boxcox_lambda": self.target_transformation.boxcox_lambda,  # deprecated alias
@@ -3759,9 +3755,9 @@ class FeatureEngineer:
     def reset(self) -> None:
         """Reset pipeline to initial state (for retraining)"""
         logger.info("Resetting pipeline to initial state")
-        self.__init__(config=self.config)
+        type(self).__init__(self, config=self.config)
 
-    def save(self, filepath: str, version: str | None = None) -> None:
+    def save(self, filepath: str | Path, version: str | None = None) -> None:
         version = version or self.VERSION
 
         metadata = {
@@ -3786,31 +3782,30 @@ class FeatureEngineer:
             "performance_metrics": self._performance_metrics,
         }
 
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+        _fp = Path(filepath)
+        _fp.parent.mkdir(parents=True, exist_ok=True)
 
         # Save preprocessor using save_preprocessor method
-        self.save_preprocessor(str(filepath))
+        self.save_preprocessor(str(_fp))
 
         # Save metadata
-        meta_path = filepath.with_name(filepath.stem + "_metadata.joblib")
+        meta_path = _fp.with_name(_fp.stem + "_metadata.joblib")
         joblib.dump(metadata, meta_path, compress=3)
 
         logger.info(f"📦 Saved preprocessor metadata to {meta_path}")
         logger.info(f"  - State: {metadata['state']}")
-        logger.info(f"  - Continuous features: {len(metadata['continuous_features'])}")
+        logger.info(f"  - Continuous features: {len(list(metadata['continuous_features']))}")  # type: ignore[arg-type]
         logger.info(f"  - Scaler fitted: {metadata['scaler_fitted']}")
         if metadata["n_features_in"]:
             logger.info(f"  - Scaler input features: {metadata['n_features_in']}")
 
     @classmethod
-    def load(cls, filepath: str) -> FeatureEngineer:
-        filepath = Path(filepath)
+    def load(cls, filepath: str | Path) -> FeatureEngineer:
+        _fp = Path(filepath)
 
-        if not filepath.exists():
-            raise FileNotFoundError(f"Preprocessor file not found: {filepath}")
+        if not _fp.exists():
+            raise FileNotFoundError(f"Preprocessor file not found: {_fp}")
 
-        # ── BUG 1 FIX ────────────────────────────────────────────────────────
         # cls() called without arguments raises ValueError("FeatureEngineer
         # requires configuration!") because __init__ has no defaults.
         # load_preprocessor() will restore the full config from the .joblib
@@ -3829,10 +3824,10 @@ class FeatureEngineer:
         # Initialise the bare minimum attributes that load_preprocessor()
         # reads before it overwrites them (e.g. COMPATIBLE_VERSIONS, VERSION)
         # by delegating to the class definitions directly.
-        feature_engineer.load_preprocessor(str(filepath))
+        feature_engineer.load_preprocessor(str(_fp))
 
         # Try to load metadata if available
-        meta_path = filepath.with_name(filepath.stem + "_metadata.joblib")
+        meta_path = _fp.with_name(_fp.stem + "_metadata.joblib")
         if meta_path.exists():
             try:
                 metadata = joblib.load(meta_path)
@@ -3895,7 +3890,7 @@ if __name__ == "__main__":
         config = load_config()
         feat_cfg = get_feature_config(config)
 
-        print(f"\n✅ Config loaded successfully:")
+        print("\n✅ Config loaded successfully:")
         print(f"  - Config version: {config.get('version', 'unknown')}")
         print(f"  - Features extracted: {len(feat_cfg)} parameters")
         print(f"  - Smoker binary map: {feat_cfg['smoker_binary_map']}")
@@ -3904,10 +3899,10 @@ if __name__ == "__main__":
         print(f"  - VIF threshold: {feat_cfg['vif_threshold']}")
 
         fe = FeatureEngineer(config_dict=feat_cfg)
-        print(f"\n✅ FeatureEngineer initialized successfully!")
+        print("\n✅ FeatureEngineer initialized successfully!")
         print(f"  - Version: {fe.VERSION}")
         print(f"  - State: {fe._state.value}")
-        print(f"  - Config validated: ✓")
+        print("  - Config validated: ✓")
         sys.exit(0)
 
     except FileNotFoundError as fnf:

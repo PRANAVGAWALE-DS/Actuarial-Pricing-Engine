@@ -7706,6 +7706,6 @@
   "random_state": 42,
   "stratify_splits": true,
   "test_size": 0.15,
-  "created_at": "2026-04-18T19:20:47.914281",
-  "pipeline_version": "5.2.0-fix4"
+  "created_at": "2026-04-25T01:37:39.032603",
+  "pipeline_version": "5.2.0"
 }

@@ -12,10 +12,7 @@ Exit code 0 = all checks passed.
 Exit code 1 = one or more failures (details printed to stdout).
 """
 
-import hashlib
-import importlib
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -69,7 +66,7 @@ check(
 )
 check(
     "A2-replacement · /health route still returns 200 on unhealthy (cd.yml compat)",
-    "return HealthResponse(\n            status=\"unhealthy\"" in read("api/routes.py")
+    'return HealthResponse(\n            status="unhealthy"' in read("api/routes.py")
     or 'status="unhealthy"' in read("api/routes.py"),
     "Do NOT apply A2 to routes.py — cd.yml smoke test expects HTTP 200",
 )
@@ -133,8 +130,7 @@ routes = read("api/routes.py")
 # B1 · Single-pass inference
 check(
     "B1 · predict_single uses predict_with_intervals() (single pass)",
-    "predict_with_intervals" in routes
-    and "predictor.predict(input_df" not in routes,
+    "predict_with_intervals" in routes and "predictor.predict(input_df" not in routes,
     "Remove predictor.predict() call and use predict_with_intervals() instead",
 )
 check(
@@ -146,9 +142,7 @@ check(
 # B2 · Checksum verification in load_model() — order: hash BEFORE joblib.load()
 models_src = read("src/insurance_ml/models.py")
 # Find the load_model method and check that checksum comes before joblib.load
-load_model_match = re.search(
-    r"def load_model.*?(?=def |\Z)", models_src, re.DOTALL
-)
+load_model_match = re.search(r"def load_model.*?(?=def |\Z)", models_src, re.DOTALL)
 if load_model_match:
     lm_body = load_model_match.group()
     cs_pos = lm_body.find("sha256")
@@ -177,7 +171,7 @@ main_src = read("api/main.py")
 check(
     "B3 · CORS allow_headers is not wildcard '*'",
     'allow_headers=["*"]' not in main_src,
-    "Change allow_headers=[\"*\"] to explicit list: [\"Content-Type\", \"Authorization\", \"X-Request-ID\"]",
+    'Change allow_headers=["*"] to explicit list: ["Content-Type", "Authorization", "X-Request-ID"]',
 )
 check(
     "B3 · CORS allow_headers contains 'Content-Type'",
@@ -201,7 +195,7 @@ check(
     "Confirm load_config() reads MLFLOW_TRACKING_URI env var (already present — no YAML change needed)",
 )
 
-# B6 · Fix tuple-wrapped assertion
+# tuple-wrapped assertion
 compat = read("tests/test_predict_compatibility.py")
 check(
     "B6 · assert_not_called() is a standalone statement (not wrapped in tuple)",
@@ -240,8 +234,7 @@ check(
 )
 check(
     "C3 · Streamlit HTTPS check guards against localhost prefix spoofing",
-    '_is_local = _parsed.hostname in' in streamlit_src
-    or "hostname in" in streamlit_src,
+    "_is_local = _parsed.hostname in" in streamlit_src or "hostname in" in streamlit_src,
     "Check: _parsed.hostname in ('localhost', '127.0.0.1', '::1')",
 )
 check(

@@ -34,7 +34,7 @@ class InsuranceInput(BaseModel):
     smoker: str = Field(..., description="Smoking status (yes/no)")
     region: str = Field(..., description="Geographic region")
 
-    # ── F-04 FIX: Per-thread config storage prevents race conditions ──
+    # Per-thread config storage prevents race conditions ──
     # Class-level attribute shares state across threads (Gunicorn workers,
     # Optuna parallel trials). threading.local() gives each thread its own
     # independent copy, eliminating last-write-wins corruption.
@@ -58,7 +58,7 @@ class InsuranceInput(BaseModel):
         References: features.age_min, features.age_max
         """
         if cls._get_config() is None:
-            # ML-10 FIX: Raise instead of silently falling back to permissive bounds
+            # Raise instead of silently falling back to permissive bounds
             # (0–120) that would accept clinically impossible values.  Production
             # deployments must inject config via InsuranceInput.set_config() before
             # validation.  Only unit tests that explicitly test the no-config path
@@ -70,7 +70,8 @@ class InsuranceInput(BaseModel):
                 "at test setup."
             )
         else:
-            features_cfg = cls._get_config().get("features", {})
+            _cfg = cls._get_config()
+            features_cfg = (_cfg or {}).get("features", {})
             age_min = features_cfg.get("age_min", 18)  # tight underwriting default
             age_max = features_cfg.get("age_max", 80)  # tight underwriting default
 
@@ -102,14 +103,15 @@ class InsuranceInput(BaseModel):
         References: features.bmi_min, features.bmi_max
         """
         if cls._get_config() is None:
-            # ML-10 FIX: Raise instead of silently accepting BMI values in [10, 100]
+            # Raise instead of silently accepting BMI values in [10, 100]
             # which includes clinically impossible values (BMI=90).
             raise RuntimeError(
                 "InsuranceInput.set_config() must be called before validation. "
                 "Config is required to determine BMI bounds."
             )
         else:
-            features_cfg = cls._get_config().get("features", {})
+            _cfg = cls._get_config()
+            features_cfg = (_cfg or {}).get("features", {})
             bmi_min = features_cfg.get("bmi_min", 15.0)  # tight underwriting default
             bmi_max = features_cfg.get("bmi_max", 55.0)  # tight underwriting default
 
@@ -180,14 +182,6 @@ class DataLoader:
         self.data_cfg = self.config["data"]
 
         # COMPREHENSIVE validation of data config
-        # BUG-A FIX (v7.5.0): Removed 'validation_size' from required_keys.
-        # config.py's Issue-5 FIX already dropped it from _validate_config()
-        # because data.validation_size is never consumed — get_training_config()
-        # reads training.val_size as the sole source of truth for the validation
-        # split size.  Keeping it here caused DataLoader.__init__ to crash if
-        # config.yaml was updated to follow config.py's own guidance and omit
-        # data.validation_size.  Both validators now agree: validation_size is
-        # not required in the data section.
         required_keys = {
             "raw_path": "Path to CSV file",
             "target_column": "Target variable name",
@@ -201,14 +195,14 @@ class DataLoader:
 
         if missing:
             raise ValueError(
-                f"❌ data section missing required keys:\n"
+                "❌ data section missing required keys:\n"
                 + "\n".join(f"   - {item}" for item in missing)
                 + f"\n\n   Required keys: {list(required_keys.keys())}"
             )
 
         # Validate value ranges
         test_size = self.data_cfg["test_size"]
-        # BUG-A FIX (continued): val_size is no longer read from data section here.
+        # val_size is no longer read from data section here.
         # DataLoader is used for loading/cleaning only; split sizes are the
         # responsibility of train.py via get_training_config() -> training.val_size.
         # We retain a lightweight check if the legacy field happens to be present,
@@ -274,7 +268,7 @@ class DataLoader:
             + (f"\n   validation_size (legacy): {val_size:.2%}" if val_size > 0 else "")
         )
 
-    # ── ISSUE-4 FIX (v7.5.0): Strict config accessors — no hardcoded fallbacks ──
+    # Strict config accessors — no hardcoded fallbacks ──
     # The original code used features_cfg.get("categorical_features", ["sex", ...])
     # in 4 separate methods, and self.data_cfg.get("target_column", "charges") in
     # 3 methods.  These silent defaults directly contradict the project's "ZERO
@@ -282,7 +276,7 @@ class DataLoader:
     # after adding a new feature), the code silently trains on the wrong columns
     # instead of raising a clear error.
     #
-    # Fix: Replace every .get(key, fallback) with a strict accessor that raises
+    # Replace every .get(key, fallback) with a strict accessor that raises
     # ValueError if the key is absent, forcing the operator to fix config.yaml.
 
     def _strict_get_features(self) -> dict:
@@ -306,7 +300,7 @@ class DataLoader:
 
         if missing:
             raise ValueError(
-                f"❌ Config missing required keys (ZERO DEFAULTS policy):\n"
+                "❌ Config missing required keys (ZERO DEFAULTS policy):\n"
                 + "\n".join(f"   - {k}" for k in missing)
                 + "\n\n   These must be defined explicitly in config.yaml.\n"
                 + "   No hardcoded fallbacks are provided."
@@ -370,9 +364,9 @@ class DataLoader:
             return df
 
         except pd.errors.EmptyDataError:
-            raise ValueError(f"❌ Empty or invalid CSV file: {data_path}")
+            raise ValueError(f"❌ Empty or invalid CSV file: {data_path}") from None
         except pd.errors.ParserError as e:
-            raise ValueError(f"❌ Error parsing CSV file: {e}")
+            raise ValueError(f"❌ Error parsing CSV file: {e}") from e
         except Exception as e:
             logger.error(f"❌ Unexpected error loading data: {e}", exc_info=True)
             raise
@@ -382,7 +376,7 @@ class DataLoader:
         Validate required columns exist
         Uses: data.target_column, features.categorical_features, features.numerical_features
         """
-        # ISSUE-4 FIX: Use strict accessor — no hardcoded fallbacks.
+        # Use strict accessor — no hardcoded fallbacks.
         feat = self._strict_get_features()
         categorical_features = feat["categorical"]
         numerical_features = feat["numerical"]
@@ -416,7 +410,7 @@ class DataLoader:
         Returns:
             DataFrame with corrected dtypes
         """
-        # ISSUE-4 FIX: Use strict accessor — no hardcoded fallbacks.
+        # Use strict accessor — no hardcoded fallbacks.
         feat = self._strict_get_features()
         target_col = feat["target"]
 
@@ -450,7 +444,7 @@ class DataLoader:
                     f"❌ Cannot convert column '{col}' to {dtype}.\n"
                     f"   Sample values: {df[col].head().tolist()}\n"
                     f"   Error: {e}"
-                )
+                ) from e
 
         return df
 
@@ -488,7 +482,7 @@ class DataLoader:
             cols = df.select_dtypes(include=[dtype]).columns.tolist()
             logger.info(f"  {dtype}: {cols}")
 
-        # ISSUE-4 FIX: Use strict accessor — no hardcoded fallbacks.
+        # Use strict accessor — no hardcoded fallbacks.
         target_col = self._strict_get_features()["target"]
         if target_col in df.columns:
             logger.info(f"\n📊 Target ({target_col}) statistics:")
@@ -523,7 +517,7 @@ class DataLoader:
                 f"✅ Removed {dup_removed} duplicate rows ({dup_removed/initial_rows*100:.1f}%)"
             )
 
-        # ISSUE-4 FIX: Use strict accessor — no hardcoded fallbacks.
+        # Use strict accessor — no hardcoded fallbacks.
         feat = self._strict_get_features()
         critical_columns = feat["categorical"] + feat["numerical"]
 
@@ -587,7 +581,7 @@ class DataLoader:
         """
         Validate a DataFrame of InsuranceInput records.
 
-        ── F-06 FIX: Batch validation with Pydantic v2 TypeAdapter ──
+        Batch validation with Pydantic v2 TypeAdapter ──
         Replaces per-row iterrows() loop (O(n) Python objects) with
         TypeAdapter.validate_python() which processes the list in one call,
         dramatically reducing overhead for large batches.
@@ -679,7 +673,7 @@ class DataLoader:
         Returns:
             Dictionary with categorical and numerical feature lists
         """
-        # ISSUE-4 FIX: Use strict accessor — no hardcoded fallbacks.
+        # Use strict accessor — no hardcoded fallbacks.
         return self._strict_get_features()
 
 
@@ -739,8 +733,8 @@ if __name__ == "__main__":
         # Get data summary
         print("\n[6/6] Generating data summary...")
         summary = loader.get_data_summary(df_clean)
-        print(f"✅ Summary generated")
-        print(f"\nData Summary:")
+        print("✅ Summary generated")
+        print("\nData Summary:")
         print(f"  Shape: {summary['shape']}")
         print(f"  Columns: {summary['columns']}")
         print(f"  Duplicates: {summary['duplicates']}")

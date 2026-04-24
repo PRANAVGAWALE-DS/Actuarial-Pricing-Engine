@@ -27,14 +27,12 @@ Coverage (no model files):
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from insurance_ml.predict import validate_prediction_scale
-
 
 # ===========================================================================
 # validate_prediction_scale
@@ -129,9 +127,7 @@ class TestValidatePredictionScaleUnknown:
     def test_method_parameter_echoed_in_log_message(self) -> None:
         # FIX U-03: ABSOLUTE_MAX_LOG=30; use 31.0 to exceed it.
         preds = np.array([31.0])  # > ABSOLUTE_MAX_LOG=30
-        valid, msg = validate_prediction_scale(
-            preds, scale_type="log", method="log1p"
-        )
+        valid, msg = validate_prediction_scale(preds, scale_type="log", method="log1p")
         assert valid is False
         assert "log1p" in msg
 
@@ -155,8 +151,8 @@ class TestHighValueSegmentRouterDisabled:
         the filesystem.  We patch ModelManager.load_model to raise FileNotFoundError
         so the graceful-degradation path is exercised.
         """
-        from insurance_ml.predict import HighValueSegmentRouter, PredictionPipeline
         from insurance_ml.models import ModelManager
+        from insurance_ml.predict import HighValueSegmentRouter, PredictionPipeline
 
         # Build a minimal mock for PredictionPipeline that has a model_manager
         mock_pipeline = MagicMock(spec=PredictionPipeline)
@@ -211,8 +207,8 @@ class TestHighValueSegmentRouterDisabled:
           _lower = threshold * BLEND_LOWER_FACTOR
           _upper = threshold * BLEND_UPPER_FACTOR
         """
-        from insurance_ml.predict import HighValueSegmentRouter, PredictionPipeline
         from insurance_ml.models import ModelManager
+        from insurance_ml.predict import HighValueSegmentRouter, PredictionPipeline
 
         mock_pipeline = MagicMock(spec=PredictionPipeline)
         mock_mm = MagicMock(spec=ModelManager)
@@ -220,9 +216,7 @@ class TestHighValueSegmentRouterDisabled:
         mock_pipeline.model_manager = mock_mm
 
         threshold = 20_000.0
-        router = HighValueSegmentRouter(
-            global_pipeline=mock_pipeline, threshold=threshold
-        )
+        router = HighValueSegmentRouter(global_pipeline=mock_pipeline, threshold=threshold)
 
         expected_lower = threshold * HighValueSegmentRouter.BLEND_LOWER_FACTOR
         expected_upper = threshold * HighValueSegmentRouter.BLEND_UPPER_FACTOR
@@ -294,29 +288,34 @@ class TestHybridPredictorInputValidation:
     def test_age_above_max_raises_value_error(self) -> None:
         hybrid = self._make_hybrid(age_max=120)
         with pytest.raises(ValueError, match="Age"):
-            hybrid.predict_single(age=150, sex="male", bmi=25.0, children=0,
-                                  smoker="no", region="northeast")
+            hybrid.predict_single(
+                age=150, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_age_below_min_raises_value_error(self) -> None:
         hybrid = self._make_hybrid(age_min=18)
         with pytest.raises(ValueError, match="Age"):
-            hybrid.predict_single(age=17, sex="male", bmi=25.0, children=0,
-                                  smoker="no", region="northeast")
+            hybrid.predict_single(
+                age=17, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_bmi_above_max_raises_value_error(self) -> None:
         hybrid = self._make_hybrid(bmi_max=100.0)
         with pytest.raises(ValueError, match="BMI"):
-            hybrid.predict_single(age=35, sex="male", bmi=101.0, children=0,
-                                  smoker="no", region="northeast")
+            hybrid.predict_single(
+                age=35, sex="male", bmi=101.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_bmi_below_min_raises_value_error(self) -> None:
         hybrid = self._make_hybrid(bmi_min=10.0)
         with pytest.raises(ValueError, match="BMI"):
-            hybrid.predict_single(age=35, sex="male", bmi=9.0, children=0,
-                                  smoker="no", region="northeast")
+            hybrid.predict_single(
+                age=35, sex="male", bmi=9.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_children_above_max_raises_value_error(self) -> None:
         hybrid = self._make_hybrid()
         with pytest.raises(ValueError, match="Children"):
-            hybrid.predict_single(age=35, sex="male", bmi=25.0, children=25,
-                                  smoker="no", region="northeast")
+            hybrid.predict_single(
+                age=35, sex="male", bmi=25.0, children=25, smoker="no", region="northeast"
+            )

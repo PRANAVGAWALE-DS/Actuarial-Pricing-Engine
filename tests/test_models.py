@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import pickle
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -78,7 +78,6 @@ from insurance_ml.models import (
     ProvenanceGate,
     capture_git_provenance,
 )
-
 
 # ===========================================================================
 # Helpers
@@ -181,8 +180,13 @@ class TestGitProvenance:
         prov = _make_provenance()
         d = prov.to_dict()
         for field in (
-            "commit_hash", "branch", "is_dirty", "tags",
-            "python_version", "platform_info", "ci_run_id",
+            "commit_hash",
+            "branch",
+            "is_dirty",
+            "tags",
+            "python_version",
+            "platform_info",
+            "ci_run_id",
         ):
             assert field in d, f"Missing field: {field}"
 
@@ -332,6 +336,7 @@ class TestArtifactManifestValidate:
     def test_all_fields_present_in_complete_metadata(self) -> None:
         result = ArtifactManifest.validate(_make_complete_metadata(), raise_on_fail=False)
         from insurance_ml.models import REQUIRED_METADATA_FIELDS
+
         for field in REQUIRED_METADATA_FIELDS:
             assert field in result["present"]
 
@@ -346,19 +351,25 @@ class TestArtifactManifestEnrichMetadata:
     def test_injects_git_commit(self) -> None:
         prov = _make_provenance()
         meta: dict = {}
-        ArtifactManifest.enrich_metadata(meta, prov, random_state=42, model_objective="reg:squarederror")
+        ArtifactManifest.enrich_metadata(
+            meta, prov, random_state=42, model_objective="reg:squarederror"
+        )
         assert meta["git_commit"] == prov.commit_hash
 
     def test_injects_random_state(self) -> None:
         prov = _make_provenance()
         meta: dict = {}
-        ArtifactManifest.enrich_metadata(meta, prov, random_state=42, model_objective="reg:squarederror")
+        ArtifactManifest.enrich_metadata(
+            meta, prov, random_state=42, model_objective="reg:squarederror"
+        )
         assert meta["random_state"] == 42
 
     def test_injects_model_objective(self) -> None:
         prov = _make_provenance()
         meta: dict = {}
-        ArtifactManifest.enrich_metadata(meta, prov, random_state=42, model_objective="reg:squarederror")
+        ArtifactManifest.enrich_metadata(
+            meta, prov, random_state=42, model_objective="reg:squarederror"
+        )
         assert meta["model_objective"] == "reg:squarederror"
 
     def test_does_not_overwrite_existing_fields(self) -> None:
@@ -375,7 +386,9 @@ class TestArtifactManifestEnrichMetadata:
             "split_sizes": {"train": 0.8, "test": 0.2},
             "training_timestamp": "2025-01-01T00:00:00Z",
         }
-        ArtifactManifest.enrich_metadata(meta, prov, random_state=42, model_objective="reg:squarederror")
+        ArtifactManifest.enrich_metadata(
+            meta, prov, random_state=42, model_objective="reg:squarederror"
+        )
         result = ArtifactManifest.validate(meta, raise_on_fail=False)
         assert result["pass"] is True
 
@@ -521,7 +534,7 @@ class TestCalibratedModelFitCalibrator:
         cm.fit_calibrator(X_val, y_val)
 
         X_test = pd.DataFrame({"a": [0.5]})
-        pred_before = base.predict(X_test)
+        base.predict(X_test)
         pred_after = cm.predict(X_test)
         # Calibrated prediction may differ from raw prediction
         # (either equal, scaled, or shifted — just verify it doesn't crash)

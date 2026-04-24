@@ -3,7 +3,7 @@ Regression Pin Registry — insurance_ml pipeline
 
 PURPOSE
 -------
-This file contains ONE test per known-fixed bug.  Each test:
+This file contains ONE test per known.  Each test:
   1. Documents WHAT the bug was (old behaviour).
   2. Asserts the CURRENT correct behaviour.
   3. Is marked with the bug ID from our audit history for traceability.
@@ -84,9 +84,7 @@ def test_r2_sentinel_nan_not_zero_for_single_sample_segment() -> None:
 
 
 @pytest.mark.unit
-def test_n3_load_business_config_does_not_mutate_config(
-    minimal_config: dict, monkeypatch
-) -> None:
+def test_n3_load_business_config_does_not_mutate_config(minimal_config: dict, monkeypatch) -> None:
     """
     Old behaviour: load_business_config_from_yaml() obtained a reference to
     hybrid_config["business_config"] and wrote "low_value_threshold" into it,
@@ -96,6 +94,7 @@ def test_n3_load_business_config_does_not_mutate_config(
     i.e. shallow copy before mutation.
     """
     import copy
+
     from insurance_ml import config as cfg_module
     from insurance_ml.evaluate import load_business_config_from_yaml
 
@@ -130,9 +129,9 @@ def test_churn_sensitivity_default_is_one() -> None:
     from insurance_ml.evaluate import BusinessConfig
 
     cfg = BusinessConfig()
-    assert cfg.churn_sensitivity == 1.0, (
-        f"BUG-CHURN-SENSITIVITY: expected 1.0, got {cfg.churn_sensitivity}"
-    )
+    assert (
+        cfg.churn_sensitivity == 1.0
+    ), f"BUG-CHURN-SENSITIVITY: expected 1.0, got {cfg.churn_sensitivity}"
 
 
 @pytest.mark.unit
@@ -162,8 +161,7 @@ def test_metrics_collector_startup_time_is_sentinel_at_init() -> None:
 
     mc = MetricsCollector()
     assert mc._startup_time == float("inf"), (
-        f"BUG-STARTUP-TIME: _startup_time should be inf at construction, "
-        f"got {mc._startup_time}"
+        f"BUG-STARTUP-TIME: _startup_time should be inf at construction, " f"got {mc._startup_time}"
     )
 
 
@@ -297,6 +295,7 @@ def test_predict_request_rejects_age_below_18() -> None:
     child policies to be submitted.  Fixed: ge=18.
     """
     from pydantic import ValidationError
+
     from api.schemas import PredictRequest
 
     with pytest.raises(ValidationError):
@@ -325,13 +324,16 @@ def test_predict_request_accepts_bmi_up_to_100() -> None:
     """
     from api.schemas import PredictRequest
 
-    req = PredictRequest(age=35, sex="female", bmi=100.0, children=0, smoker="no", region="northeast")
+    req = PredictRequest(
+        age=35, sex="female", bmi=100.0, children=0, smoker="no", region="northeast"
+    )
     assert req.bmi == 100.0
 
 
 @pytest.mark.unit
 def test_predict_request_rejects_bmi_above_100() -> None:
     from pydantic import ValidationError
+
     from api.schemas import PredictRequest
 
     with pytest.raises(ValidationError):
@@ -370,6 +372,6 @@ def test_drift_detect_records_missing_feature_not_raises(
     X_new = X_train.drop(columns=["age"])
     report = DriftMonitor.detect_drift(X_new=X_new, baseline_path=str(out))
 
-    assert "age" in report.missing_features, (
-        "BUG-DRIFT-MISSING-FEAT: 'age' should be in missing_features, not raise KeyError"
-    )
+    assert (
+        "age" in report.missing_features
+    ), "BUG-DRIFT-MISSING-FEAT: 'age' should be in missing_features, not raise KeyError"

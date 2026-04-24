@@ -731,7 +731,7 @@ These are documented honestly — engineering maturity means knowing where your 
 
 ## 🗺️ Roadmap
 
-- [ ] **Heteroscedastic conformal intervals** — segment-adaptive CI widths replacing the current global quantile fallback (FIX-7 partial implementation)
+- [ ] **Heteroscedastic conformal intervals** — segment-adaptive CI widths replacing the current global quantile fallback (partial implementation)
 - [ ] **Feature drift detection** — real-time scoring against the 795-sample, 45-feature drift baseline stored in `models/drift_baseline.json`
 - [ ] **Async batch endpoint** — Celery-backed async processing for large batch jobs (infrastructure already present)
 - [ ] **ONNX export** — cross-framework inference optimisation for low-latency production deployment

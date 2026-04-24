@@ -35,7 +35,7 @@ repos:
 
       # Git checks
   - id: check-added-large-files
-    # FIX [D11-P1]: Reduced from 5000 KB → 500 KB per security strategy doc.
+    # [D11-P1]: Reduced from 5000 KB → 500 KB per security strategy doc.
     # A 5 MB limit allowed near-complete model artifact slices through git.
     # Model artifacts that legitimately need versioning should use DVC.
     # To temporarily bypass for a known-large file: git add -f <file>
@@ -94,7 +94,7 @@ repos:
   # Docstring Coverage
   # ===================================================
 - repo: https://github.com/econchick/interrogate
-  # FIX [MEDIUM]: rev was 1.7.0, which does not exist on PyPI (latest known
+  # [MEDIUM]: rev was 1.7.0, which does not exist on PyPI (latest known
   # stable release is 1.5.0). Using a non-existent rev causes pre-commit
   # install to fail with a git fetch error.
   # Verify the latest tag at: https://github.com/econchick/interrogate/tags
@@ -123,7 +123,7 @@ repos:
   hooks:
   - id: pretty-format-yaml
     args: [--autofix, --indent, '2']
-    # FIX [MEDIUM]: scoped away from .github/workflows/ and docker/.
+    # [MEDIUM]: scoped away from .github/workflows/ and docker/.
     # GitHub Actions YAML has strict syntax requirements; auto-reformatting
     # can silently break CI pipeline definitions. docker/docker-compose.yml
     # may also rely on specific formatting conventions.
@@ -143,7 +143,7 @@ repos:
   # ===================================================
   # Jupyter Notebook Output Stripping
   # ===================================================
-  # FIX [HIGH] NB2: nbstripout moved BEFORE nbqa-ruff.
+  # [HIGH] NB2: nbstripout moved BEFORE nbqa-ruff.
   # Pre-commit runs hooks in declaration order. nbqa-ruff lints notebook cells;
   # if outputs are still present during linting they may contain sensitive data
   # (printed credentials, large arrays, model output) that gets processed by
@@ -174,7 +174,7 @@ default_language_version:
 fail_fast: false
 
 # Files to exclude from all hooks
-# FIX [RD3]: narrowed from blanket 'data/' to specific subdirectories.
+# [RD3]: narrowed from blanket 'data/' to specific subdirectories.
 # A blanket 'data/' exclude silently skips ALL files inside data/ — including
 # any accidentally committed Python scripts or credentials files. Narrowing to
 # known-large or known-binary subdirectories preserves hook coverage for

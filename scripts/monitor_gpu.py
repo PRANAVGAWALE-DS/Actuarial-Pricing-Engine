@@ -9,12 +9,9 @@ using PyTorch and system APIs.
 import argparse
 import logging
 import os
-import sys
-import threading
 import time
 import warnings
 from datetime import datetime
-from typing import Dict, List, Optional
 
 import psutil
 
@@ -27,7 +24,7 @@ logger = logging.getLogger(__name__)
 class GPUMonitor:
     """Monitor GPU usage in real-time."""
 
-    def __init__(self, interval: float = 1.0, max_duration: Optional[float] = None):
+    def __init__(self, interval: float = 1.0, max_duration: float | None = None):
         """
         Initialize GPU monitor.
 
@@ -61,7 +58,7 @@ class GPUMonitor:
         except ImportError:
             logger.warning("TensorFlow not available")
 
-    def _get_torch_gpu_stats(self) -> Dict[str, any]:
+    def _get_torch_gpu_stats(self) -> dict[str, any]:
         """Get GPU statistics from PyTorch."""
         stats = {}
 
@@ -90,7 +87,7 @@ class GPUMonitor:
 
         return stats
 
-    def _get_torch_cuda_info(self) -> Dict[str, any]:
+    def _get_torch_cuda_info(self) -> dict[str, any]:
         """Get CUDA information from PyTorch."""
         info = {}
 
@@ -107,7 +104,7 @@ class GPUMonitor:
 
         return info
 
-    def _get_cpu_stats(self) -> Dict[str, any]:
+    def _get_cpu_stats(self) -> dict[str, any]:
         """Get CPU statistics."""
         try:
             cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -130,7 +127,7 @@ class GPUMonitor:
         print("GPU MONITORING - Press Ctrl+C to stop")
         print("=" * 80)
 
-    def _print_torch_stats(self, stats: Dict) -> None:
+    def _print_torch_stats(self, stats: dict) -> None:
         """Print PyTorch GPU statistics."""
         if not stats:
             return
@@ -156,7 +153,7 @@ class GPUMonitor:
             print(f"  Memory: [{bar}] {utilization:5.1f}%")
             print(f"    {allocated:6.2f}GB / {total:6.2f}GB allocated | {free:6.2f}GB free")
 
-    def _print_cpu_stats(self, stats: Dict) -> None:
+    def _print_cpu_stats(self, stats: dict) -> None:
         """Print CPU statistics."""
         if not stats:
             return

@@ -8,7 +8,7 @@ import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any
 
 import matplotlib
 import numpy as np
@@ -32,15 +32,15 @@ warnings.filterwarnings(
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from insurance_ml.config import load_config
-from insurance_ml.predict import HybridPredictor, PredictionPipeline
+from insurance_ml.config import load_config  # noqa: E402
+from insurance_ml.predict import HybridPredictor, PredictionPipeline  # noqa: E402
 
 # Force UTF-8 output on Windows
 if sys.platform == "win32":
     try:
         import codecs
 
-        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, errors="replace")
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer)
     except (AttributeError, TypeError):
         pass
 
@@ -82,7 +82,7 @@ class BusinessConfig:
     base_profit_margin: float = 0.15
     admin_cost_per_policy: float = 25.0
     churn_threshold_pct: float = 0.40
-    # FIX ISSUE-5: was 0.01 — effectively disabled churn metric (required 5000%
+    # was 0.01 — effectively disabled churn metric (required 5000%
     # overpricing to reach 50% churn probability). Aligned with config.yaml
     # business_config.churn_sensitivity: 1.0. This default is now used whenever
     # load_business_config_from_yaml() fails or BusinessConfig() is constructed
@@ -102,7 +102,7 @@ class BusinessConfig:
     # governance and untuneable without code changes.  Now declared here so
     # they can be driven from hybrid_predictor.business_config in config.yaml.
     biz_score_profit_target: float = 600.0  # profitability_score = 50 at/above this.
-    # FIX: raised from 500.0 to 600.0 to calibrate against the actual 50k-portfolio
+    # raised from 500.0 to 600.0 to calibrate against the actual 50k-portfolio
     # ML baseline ($615/policy).  At 500.0 both the ML model ($615) and hybrid ($677)
     # exceeded the target identically, making the profit difference invisible to the
     # gate.  At 600.0 the ML baseline sits just above the threshold.
@@ -116,13 +116,13 @@ class BusinessConfig:
     biz_score_quality_weight: float = 20.0  # accuracy-rate multiplier
 
     @classmethod
-    def from_config_dict(cls, config_dict: Dict) -> "BusinessConfig":
+    def from_config_dict(cls, config_dict: dict) -> BusinessConfig:
         """Create BusinessConfig from config.yaml dictionary"""
         return cls(
             base_profit_margin=config_dict.get("base_profit_margin", 0.15),
             admin_cost_per_policy=config_dict.get("admin_cost_per_policy", 25.0),
             churn_threshold_pct=config_dict.get("churn_threshold_pct", 0.40),
-            churn_sensitivity=config_dict.get("churn_sensitivity", 1.0),  # FIX ISSUE-5: was 0.01
+            churn_sensitivity=config_dict.get("churn_sensitivity", 1.0),
             customer_acquisition_cost=config_dict.get("customer_acquisition_cost", 200.0),
             customer_lifetime_value_multiplier=config_dict.get(
                 "customer_lifetime_value_multiplier", 1.5
@@ -136,7 +136,9 @@ class BusinessConfig:
             excellent_accuracy_bonus=config_dict.get("excellent_accuracy_bonus", 150.0),
             low_value_threshold=config_dict.get("low_value_threshold", 4500.0),
             high_value_multiplier=config_dict.get("high_value_multiplier", 1.5),
-            biz_score_profit_target=config_dict.get("biz_score_profit_target", 600.0),  # aligned with dataclass default
+            biz_score_profit_target=config_dict.get(
+                "biz_score_profit_target", 600.0
+            ),  # aligned with dataclass default
             biz_score_churn_low=config_dict.get("biz_score_churn_low", 0.10),
             biz_score_churn_high=config_dict.get("biz_score_churn_high", 0.20),
             biz_score_retention_max=config_dict.get("biz_score_retention_max", 30.0),
@@ -149,7 +151,7 @@ def load_business_config_from_yaml() -> BusinessConfig:
     try:
         config = load_config()
         hybrid_config = config.get("hybrid_predictor", {})
-        # N3 FIX: take a shallow copy so we don't mutate the cached config dict.
+        # take a shallow copy so we don't mutate the cached config dict.
         # The original code obtained a reference to hybrid_config["business_config"]
         # and wrote "low_value_threshold" into it, permanently modifying the shared
         # config object for any subsequent caller in the same process.
@@ -157,7 +159,7 @@ def load_business_config_from_yaml() -> BusinessConfig:
         threshold = hybrid_config.get("threshold", 4500.0)
         business_dict["low_value_threshold"] = threshold
         return BusinessConfig.from_config_dict(business_dict)
-    except (OSError, IOError, KeyError, ValueError, Exception) as e:
+    except (OSError, KeyError, ValueError, Exception) as e:
         logger.warning(f"⚠️ Could not load business config from YAML: {e}")
         return BusinessConfig()
 
@@ -170,13 +172,13 @@ def load_business_config_from_yaml() -> BusinessConfig:
 class BusinessMetricsCalculator:
     """Calculate profit-weighted business performance metrics"""
 
-    def __init__(self, config: BusinessConfig = None):
+    def __init__(self, config: BusinessConfig | None = None):
         self.config = config or BusinessConfig()
         self.business_calc = self
 
     def calculate_single_prediction_value(
         self, true_charge: float, predicted_charge: float
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Calculate business value/loss for a single prediction.
 
         T3-A (v7.5.0): Revenue model aligned to actuarial convention.
@@ -192,7 +194,7 @@ class BusinessMetricsCalculator:
 
         # T3-A: actuarially standard revenue and gross profit
         # loading is applied to the charged premium, not compounded on top of true_charge
-        loading = self.config.base_profit_margin          # default 0.03
+        loading = self.config.base_profit_margin  # default 0.03
         premium_charged = predicted_charge
         revenue = premium_charged * (1.0 + loading)
         claims_cost = true_charge
@@ -208,7 +210,7 @@ class BusinessMetricsCalculator:
             if overpricing_pct > self.config.churn_threshold_pct:
                 excess_overpricing = overpricing_pct - self.config.churn_threshold_pct
                 churn_probability = min(excess_overpricing * self.config.churn_sensitivity, 0.80)
-                # FIX H3 (v7.4.0): CLV based on true_charge, not predicted_charge.
+                # CLV based on true_charge, not predicted_charge.
                 # Using predicted_charge self-amplified churn cost: an overpriced
                 # prediction inflated both the revenue line and its own churn penalty
                 # (e.g. predicting $40K for a $5K policy created ~$48K churn cost).
@@ -224,7 +226,7 @@ class BusinessMetricsCalculator:
 
         if error < 0:
             underpricing_pct = abs(error_pct)
-            # N6 FIX: was hardcoded 0.3, making config.underpricing_penalty_multiplier
+            # was hardcoded 0.3, making config.underpricing_penalty_multiplier
             # dead code for the primary profit path.  Now reads from BusinessConfig so
             # config.yaml changes actually affect net_profit / deployment decisions.
             base_penalty = abs(error) * self.config.underpricing_penalty_multiplier
@@ -260,10 +262,10 @@ class BusinessMetricsCalculator:
 
     def calculate_portfolio_metrics(
         self, y_true: np.ndarray, y_pred: np.ndarray, segment_name: str = "overall"
-    ) -> Dict[str, float]:
+    ) -> dict[str, Any]:
         """Calculate business metrics for entire portfolio.
 
-        P1/P2 FIX (vectorised): replaces the Python list-comprehension that called
+        replaces the Python list-comprehension that called
         calculate_single_prediction_value() once per row.  For a 10K-policy batch
         that loop consumed ~40 ms; the vectorised path runs in ~1 ms.
         calculate_single_prediction_value() is retained for single-row diagnostics
@@ -274,35 +276,35 @@ class BusinessMetricsCalculator:
         y_pred = np.asarray(y_pred, dtype=float)
 
         cfg = self.config
-        loading   = cfg.base_profit_margin
-        admin     = cfg.admin_cost_per_policy
+        loading = cfg.base_profit_margin
+        admin = cfg.admin_cost_per_policy
 
-        error     = y_pred - y_true
+        error = y_pred - y_true
         error_pct = np.where(y_true > 0, error / y_true, 0.0)
 
         # ── Revenue / gross profit ────────────────────────────────────────────
         gross_profit = y_pred - y_true + loading * y_pred - admin
 
         # ── Overpricing / churn ───────────────────────────────────────────────
-        over_mask        = error > 0
-        overpricing_pct  = np.where(over_mask, error_pct, 0.0)
-        excess           = np.maximum(overpricing_pct - cfg.churn_threshold_pct, 0.0)
-        churn_prob       = np.minimum(excess * cfg.churn_sensitivity, _MAX_CHURN_PROBABILITY)
-        churn_prob       = np.where(over_mask, churn_prob, 0.0)
-        clv              = y_true * cfg.customer_lifetime_value_multiplier
-        churn_cost       = churn_prob * (clv + cfg.customer_acquisition_cost)
+        over_mask = error > 0
+        overpricing_pct = np.where(over_mask, error_pct, 0.0)
+        excess = np.maximum(overpricing_pct - cfg.churn_threshold_pct, 0.0)
+        churn_prob = np.minimum(excess * cfg.churn_sensitivity, _MAX_CHURN_PROBABILITY)
+        churn_prob = np.where(over_mask, churn_prob, 0.0)
+        clv = y_true * cfg.customer_lifetime_value_multiplier
+        churn_cost = churn_prob * (clv + cfg.customer_acquisition_cost)
 
         # ── Underpricing penalty ──────────────────────────────────────────────
-        under_mask       = error < 0
-        under_pct        = np.where(under_mask, np.abs(error_pct), 0.0)
-        revenue_vec      = y_pred * (1.0 + loading)
-        base_pen         = np.abs(error) * cfg.underpricing_penalty_multiplier
-        max_pen          = revenue_vec * 0.2
-        under_pen        = np.where(under_mask, np.minimum(base_pen, max_pen), 0.0)
-        severe_mask      = under_pct > cfg.severe_underpricing_threshold_pct
-        under_pen        = np.where(under_mask & severe_mask,
-                                    under_pen + cfg.severe_underpricing_penalty,
-                                    under_pen)
+        under_mask = error < 0
+        under_pct = np.where(under_mask, np.abs(error_pct), 0.0)
+        revenue_vec = y_pred * (1.0 + loading)
+        base_pen = np.abs(error) * cfg.underpricing_penalty_multiplier
+        max_pen = revenue_vec * 0.2
+        under_pen = np.where(under_mask, np.minimum(base_pen, max_pen), 0.0)
+        severe_mask = under_pct > cfg.severe_underpricing_threshold_pct
+        under_pen = np.where(
+            under_mask & severe_mask, under_pen + cfg.severe_underpricing_penalty, under_pen
+        )
 
         # ── Accuracy bonus ────────────────────────────────────────────────────
         abs_err_pct = np.abs(error_pct)
@@ -319,51 +321,51 @@ class BusinessMetricsCalculator:
         net_profit = gross_profit - churn_cost - under_pen + bonus
 
         # ── Aggregates ────────────────────────────────────────────────────────
-        total_revenue         = float(np.sum(revenue_vec))
-        total_claims          = float(np.sum(y_true))
-        total_admin           = float(n * admin)
-        total_gross_profit    = float(np.sum(gross_profit))
-        total_churn_cost      = float(np.sum(churn_cost))
-        total_under_pen       = float(np.sum(under_pen))
-        total_bonus           = float(np.sum(bonus))
-        total_net_profit      = float(np.sum(net_profit))
+        total_revenue = float(np.sum(revenue_vec))
+        total_claims = float(np.sum(y_true))
+        total_admin = float(n * admin)
+        total_gross_profit = float(np.sum(gross_profit))
+        total_churn_cost = float(np.sum(churn_cost))
+        total_under_pen = float(np.sum(under_pen))
+        total_bonus = float(np.sum(bonus))
+        total_net_profit = float(np.sum(net_profit))
 
         gross_margin = (total_gross_profit / total_revenue * 100) if total_revenue > 0 else 0
-        net_margin   = (total_net_profit   / total_revenue * 100) if total_revenue > 0 else 0
+        net_margin = (total_net_profit / total_revenue * 100) if total_revenue > 0 else 0
 
         n_underpriced = int(np.sum(under_mask))
-        n_overpriced  = int(np.sum(over_mask))
-        n_accurate    = int(np.sum(abs_err_pct <= cfg.acceptable_error_band_pct))
+        n_overpriced = int(np.sum(over_mask))
+        n_accurate = int(np.sum(abs_err_pct <= cfg.acceptable_error_band_pct))
 
         profit_per_policy = total_net_profit / n if n > 0 else 0.0
-        churn_rate        = float(np.sum(churn_prob)) / n if n > 0 else 0.0
-        biz_score         = self._calculate_business_value_score(
+        churn_rate = float(np.sum(churn_prob)) / n if n > 0 else 0.0
+        biz_score = self._calculate_business_value_score(
             profit_per_policy, churn_rate, n_accurate / n if n > 0 else 0.0
         )
 
         return {
-            "segment":                    segment_name,
-            "n_predictions":              n,
-            "total_revenue":              total_revenue,
-            "total_claims":               total_claims,
-            "total_admin":                total_admin,
-            "total_base_cost":            total_claims + total_admin,
-            "total_gross_profit":         total_gross_profit,
-            "gross_margin_pct":           gross_margin,
-            "total_churn_cost":           total_churn_cost,
+            "segment": segment_name,
+            "n_predictions": n,
+            "total_revenue": total_revenue,
+            "total_claims": total_claims,
+            "total_admin": total_admin,
+            "total_base_cost": total_claims + total_admin,
+            "total_gross_profit": total_gross_profit,
+            "gross_margin_pct": gross_margin,
+            "total_churn_cost": total_churn_cost,
             "total_underpricing_penalty": total_under_pen,
-            "total_accuracy_bonus":       total_bonus,
-            "total_net_profit":           total_net_profit,
-            "net_margin_pct":             net_margin,
-            "profit_per_policy":          profit_per_policy,
-            "avg_churn_probability":      float(np.mean(churn_prob)),
+            "total_accuracy_bonus": total_bonus,
+            "total_net_profit": total_net_profit,
+            "net_margin_pct": net_margin,
+            "profit_per_policy": profit_per_policy,
+            "avg_churn_probability": float(np.mean(churn_prob)),
             "expected_churned_customers": float(np.sum(churn_prob)),
-            "churn_rate_pct":             churn_rate * 100,
-            "n_underpriced":              n_underpriced,
-            "n_overpriced":               n_overpriced,
-            "n_accurate":                 n_accurate,
-            "accuracy_rate_pct":          (n_accurate / n * 100) if n > 0 else 0.0,
-            "business_value_score":       biz_score,
+            "churn_rate_pct": churn_rate * 100,
+            "n_underpriced": n_underpriced,
+            "n_overpriced": n_overpriced,
+            "n_accurate": n_accurate,
+            "accuracy_rate_pct": (n_accurate / n * 100) if n > 0 else 0.0,
+            "business_value_score": biz_score,
         }
 
     def _calculate_business_value_score(
@@ -388,7 +390,7 @@ class BusinessMetricsCalculator:
             profitability_score = max(-50.0, (profit_per_policy / _profit_target) * 25.0)
 
         _churn_band = _churn_high - _churn_low  # avoid div-by-zero if equal
-        # FIX P0-BIZ: Previous formula had a non-monotonic discontinuity at
+        # Previous formula had a non-monotonic discontinuity at
         # _churn_low (default 10%).  The two piecewise branches did not connect:
         #   churn=9.9%  → first branch  →  0.30 pts
         #   churn=10.1% → second branch → 14.85 pts  ← score RISES as churn WORSENS
@@ -422,15 +424,15 @@ class BusinessMetricsCalculator:
         y_true: np.ndarray,
         y_pred: np.ndarray,
         use_business_thresholds: bool = True,
-        config: Optional[Dict] = None,
-    ) -> Dict[str, Dict]:
+        config: dict | None = None,
+    ) -> dict[str, dict]:
         """Calculate metrics for premium segments"""
         if config is None:
             try:
-                from insurance_ml.config import load_config
+                from insurance_ml.config import load_config  # noqa: E402
 
                 config = load_config()
-            except (OSError, IOError, ImportError, RuntimeError) as e:
+            except (OSError, ImportError, RuntimeError) as e:
                 logger.warning(f"⚠️ Could not load config: {e}. Using defaults.")
                 config = {}
 
@@ -483,7 +485,7 @@ class BusinessMetricsCalculator:
 
             rmse = np.sqrt(np.mean((seg_true - seg_pred) ** 2))
             mae = np.mean(np.abs(seg_true - seg_pred))
-            # FIX H1/M2 (v7.4.0): pass segment name so warnings identify the
+            # pass segment name so warnings identify the
             # failing risk tier (e.g. "⚠️ SMAPE = 110.0% > 100% [segment: low_risk]")
             smape = calculate_smape(seg_true, seg_pred, segment_name=name)
             male = calculate_male(seg_true, seg_pred, segment_name=name)
@@ -517,7 +519,7 @@ class BusinessMetricsCalculator:
         y_true: np.ndarray,
         y_pred: np.ndarray,
         metadata_path: str = "models/pipeline_metadata.json",
-    ) -> Dict[str, Dict]:
+    ) -> dict[str, dict]:
         """
         Per-segment metrics using the same boundaries as the G6 deployment gate.
 
@@ -559,7 +561,7 @@ class BusinessMetricsCalculator:
             if meta_file.exists():
                 import json as _jmeta
 
-                with open(meta_file, "r") as _f:
+                with open(meta_file) as _f:
                     _meta = _jmeta.load(_f)
                 _bc = _meta.get("bias_correction_thresholds", {})
                 if _bc:
@@ -588,7 +590,7 @@ class BusinessMetricsCalculator:
         # ── Compute per-segment metrics ───────────────────────────────────
         tier = pd.cut(y_true, bins=bins, labels=labels, include_lowest=True)
 
-        results: Dict[str, Dict] = {}
+        results: dict[str, dict] = {}
 
         for label in labels:
             mask_series = tier == label
@@ -647,8 +649,8 @@ class BusinessMetricsCalculator:
         return results
 
     def calculate_cost_weighted_error(
-        self, y_true: np.ndarray, y_pred: np.ndarray, config: Optional[Dict] = None
-    ) -> Dict[str, float]:
+        self, y_true: np.ndarray, y_pred: np.ndarray, config: dict | None = None
+    ) -> dict[str, float]:
         """Cost-weighted error with asymmetric penalties"""
         errors = y_pred - y_true
 
@@ -657,10 +659,10 @@ class BusinessMetricsCalculator:
 
         if config is None:
             try:
-                from insurance_ml.config import load_config
+                from insurance_ml.config import load_config  # noqa: E402
 
                 config = load_config()
-            except (OSError, IOError, ImportError, RuntimeError) as e:
+            except (OSError, ImportError, RuntimeError) as e:
                 logger.warning(f"⚠️ Could not load config: {e}. Using defaults.")
                 config = {}
 
@@ -724,16 +726,16 @@ def compare_multiple_configurations(
         # _predict_in_batches uses this as the chunk size so each call is
         # accepted regardless of total dataset size.
         _inference_limit = int(_full_cfg.get("prediction", {}).get("max_batch_size", 50_000))
-        # FIX ISSUE-6: read deployed threshold and blend_ratio from config
+        # read deployed threshold and blend_ratio from config
         # instead of hardcoding 4500.0 (which is below dataset mean ~$13K,
         # making BlendRatio/SoftWindow/Calibration sweep axes effectively flat).
         _deployed_threshold = float(_full_cfg.get("hybrid_predictor", {}).get("threshold", 5000.0))
         _deployed_blend = float(_full_cfg.get("hybrid_predictor", {}).get("blend_ratio", 0.75))
     except Exception as _cfg_err:
-        # E2 FIX: The bare `except:` here swallowed any YAML parse error, missing
+        # The bare `except:` here swallowed any YAML parse error, missing
         # key, or type error silently — the sweep ran with $5,000 / blend=0.75
         # defaults and produced quietly wrong results with no indication in the log.
-        # Fix: log a WARNING with the actual error so the operator knows the sweep
+        # log a WARNING with the actual error so the operator knows the sweep
         # is anchored at fallback defaults, not the deployed config.
         logger.warning(
             f"⚠️ compare_multiple_configurations: failed to read deployed config "
@@ -759,7 +761,7 @@ def compare_multiple_configurations(
 
     configurations = []
 
-    # FIX: Original sweep [3500..5500] sits entirely below the dataset mean (~$13K).
+    # Original sweep [3500..5500] sits entirely below the dataset mean (~$13K).
     # At these thresholds ~98% of policies route ML-dominant, so the sweep cannot
     # detect where the configured/effective blend actually diverge.
     # Extended range covers P10 through P90 of a typical insurance charge distribution.
@@ -768,9 +770,9 @@ def compare_multiple_configurations(
             {
                 "name": f"Threshold_{threshold}",
                 "threshold": threshold,
-                "blend_ratio": _deployed_blend,  # FIX ISSUE-6: was 0.5
+                "blend_ratio": _deployed_blend,
                 "use_soft_blending": True,
-                "soft_blend_window": 1000.0,  # FIX ISSUE-6: was 500.0 (too narrow for $5K threshold)
+                "soft_blend_window": 1000.0,
                 "calibration_factor": _default_cal_factor,
                 "apply_to_ml_only": _default_apply_ml_only,
             }
@@ -784,11 +786,11 @@ def compare_multiple_configurations(
         0.7,
         0.75,
         0.9,
-    ]:  # FIX ISSUE-6: added 0.75, 0.9 to cover deployed range
+    ]:  # added 0.75, 0.9 to cover deployed range
         configurations.append(
             {
                 "name": f"BlendRatio_{int(ratio*100)}",
-                "threshold": _deployed_threshold,  # FIX ISSUE-6: was 4500.0 (below dataset mean)
+                "threshold": _deployed_threshold,
                 "blend_ratio": ratio,
                 "use_soft_blending": True,
                 "soft_blend_window": 1000.0,
@@ -800,8 +802,8 @@ def compare_multiple_configurations(
     configurations.append(
         {
             "name": "HardBlending",
-            "threshold": _deployed_threshold,  # FIX ISSUE-6: was 4500.0
-            "blend_ratio": _deployed_blend,  # FIX ISSUE-6: was 0.5
+            "threshold": _deployed_threshold,
+            "blend_ratio": _deployed_blend,
             "use_soft_blending": False,
             "soft_blend_window": 0.0,
             "calibration_factor": _default_cal_factor,
@@ -815,12 +817,12 @@ def compare_multiple_configurations(
         750,
         1000,
         1500,
-    ]:  # FIX ISSUE-6: added 1500 for wider window coverage
+    ]:
         configurations.append(
             {
                 "name": f"SoftWindow_{window}",
-                "threshold": _deployed_threshold,  # FIX ISSUE-6: was 4500.0
-                "blend_ratio": _deployed_blend,  # FIX ISSUE-6: was 0.5
+                "threshold": _deployed_threshold,
+                "blend_ratio": _deployed_blend,
                 "use_soft_blending": True,
                 "soft_blend_window": float(window),
                 "calibration_factor": _default_cal_factor,
@@ -835,12 +837,12 @@ def compare_multiple_configurations(
         1.10,
         1.15,
         1.20,
-    ]:  # FIX ISSUE-6: added 1.02, 1.08 to bracket deployed 1.08
+    ]:
         configurations.append(
             {
                 "name": f"Calibration_{int(cal_factor*100)}",
-                "threshold": _deployed_threshold,  # FIX ISSUE-6: was 4500.0
-                "blend_ratio": _deployed_blend,  # FIX ISSUE-6: was 0.7
+                "threshold": _deployed_threshold,
+                "blend_ratio": _deployed_blend,
                 "use_soft_blending": True,
                 "soft_blend_window": 1000.0,
                 "calibration_factor": cal_factor,
@@ -854,8 +856,8 @@ def compare_multiple_configurations(
         configurations.append(
             {
                 "name": f"CalStrategy_{label}",
-                "threshold": _deployed_threshold,  # FIX ISSUE-6: was 4500.0
-                "blend_ratio": _deployed_blend,  # FIX ISSUE-6: was 0.58
+                "threshold": _deployed_threshold,
+                "blend_ratio": _deployed_blend,
                 "use_soft_blending": True,
                 "soft_blend_window": 1000.0,
                 "calibration_factor": _default_cal_factor,
@@ -864,7 +866,9 @@ def compare_multiple_configurations(
         )
 
     y_true = y_test.values
-    ml_result = _predict_in_batches(ml_pipeline, X_test, inference_limit=_inference_limit, return_reliability=False)
+    ml_result = _predict_in_batches(
+        ml_pipeline, X_test, inference_limit=_inference_limit, return_reliability=False
+    )
     ml_preds = np.array(ml_result["predictions"])
 
     evaluator = UnifiedEvaluator(business_config, config=_full_cfg)
@@ -916,20 +920,22 @@ def compare_multiple_configurations(
                 soft_blend_window=cfg["soft_blend_window"],
                 calibration_factor=cfg.get("calibration_factor", _default_cal_factor),
                 config={
-                    **_deployed_hybrid_cfg,          # carries actuarial_params, business_config, etc.
-                    "calibration": {                  # override only sweep-specific calibration keys
+                    **_deployed_hybrid_cfg,  # carries actuarial_params, business_config, etc.
+                    "calibration": {  # override only sweep-specific calibration keys
                         "factor": cfg.get("calibration_factor", _default_cal_factor),
                         "apply_to_ml_only": cfg.get("apply_to_ml_only", _default_apply_ml_only),
                         "enabled": True,
                     },
-                    "threshold": cfg["threshold"],    # override sweep-specific routing keys
+                    "threshold": cfg["threshold"],  # override sweep-specific routing keys
                     "blend_ratio": cfg["blend_ratio"],
                     "use_soft_blending": cfg["use_soft_blending"],
                     "soft_blend_window": cfg["soft_blend_window"],
                 },
             )
 
-            hybrid_result = _predict_in_batches(hybrid, X_test, inference_limit=_inference_limit, return_reliability=False)
+            hybrid_result = _predict_in_batches(
+                hybrid, X_test, inference_limit=_inference_limit, return_reliability=False
+            )
             hybrid_preds = np.array(hybrid_result["predictions"])
 
             academic = calculate_academic_metrics(y_true, hybrid_preds)
@@ -990,12 +996,12 @@ def compare_multiple_configurations(
     best_biz = df_comparison.loc[best_business_idx]
     best_acad = df_comparison.loc[best_academic_idx]
 
-    print(f"\n🏆 Best for Business:")
+    print("\n🏆 Best for Business:")
     print(f"   Config: {best_biz['config_name']}")
     print(f"   Business Score: {best_biz['business_value_score']:.1f}")
     print(f"   Net Profit: ${best_biz['net_profit']:,.0f}")
 
-    print(f"\n🎯 Best for Accuracy:")
+    print("\n🎯 Best for Accuracy:")
     print(f"   Config: {best_acad['config_name']}")
     print(f"   RMSE: ${best_acad['rmse']:,.2f}")
 
@@ -1137,7 +1143,7 @@ def _predict_in_batches(
     X: pd.DataFrame,
     inference_limit: int,
     **kwargs,
-) -> dict:
+) -> Any:
     """Batch-safe wrapper for predictor.predict().
 
     predict.py enforces prediction.max_batch_size (default 50 000) as an
@@ -1180,21 +1186,23 @@ def _predict_in_batches(
     # length) rather than taking the first chunk's value.  Scalars like
     # effective_avg_ml_weight and actuarial_conservativeness_ratio are per-chunk
     # summaries; the true portfolio value is a length-weighted mean.
-    # FIX F-14: add any new float-summary keys here as they are added to the
+    # add any new float-summary keys here as they are added to the
     # result dict in HybridPredictor.predict() / PredictionPipeline.predict().
-    _WEIGHTED_MEAN_KEYS = frozenset({
-        "effective_avg_ml_weight",
-        "avg_ml_weight",
-        "actuarial_conservativeness_ratio",
-        "configured_blend_ratio",
-    })
+    _WEIGHTED_MEAN_KEYS = frozenset(
+        {
+            "effective_avg_ml_weight",
+            "avg_ml_weight",
+            "actuarial_conservativeness_ratio",
+            "configured_blend_ratio",
+        }
+    )
 
     def _merge(results: list, c_lens: list) -> dict:
         first, n0 = results[0], c_lens[0]
         n_total = sum(c_lens)
         merged: dict = {}
         for key, val in first.items():
-            if isinstance(val, (list, np.ndarray)) and len(val) == n0:
+            if isinstance(val, list | np.ndarray) and len(val) == n0:
                 # per-sample array — concatenate across all chunks
                 merged[key] = np.concatenate([np.asarray(r[key]) for r in results])
             elif isinstance(val, dict):
@@ -1209,15 +1217,13 @@ def _predict_in_batches(
                 else:
                     # Take the first non-None value so warnings from any
                     # chunk are surfaced rather than silently dropped.
-                    merged[key] = next(
-                        (sv for sv in sub_values if sv is not None), None
-                    )
+                    merged[key] = next((sv for sv in sub_values if sv is not None), None)
             elif (
-                isinstance(val, (int, float))
+                isinstance(val, int | float)
                 and not isinstance(val, bool)
                 and key in _WEIGHTED_MEAN_KEYS
             ):
-                # FIX F-14: scalar float summaries that represent per-sample
+                # scalar float summaries that represent per-sample
                 # averages must be recomputed as a length-weighted mean across
                 # chunks.  Taking the first-chunk value (old behaviour) produced
                 # effective_avg_ml_weight = chunk-0 average ≠ portfolio average,
@@ -1227,7 +1233,7 @@ def _predict_in_batches(
                     merged[key] = float(
                         sum(
                             float(r.get(key, val)) * cl
-                            for r, cl in zip(results, c_lens)
+                            for r, cl in zip(results, c_lens, strict=False)
                         )
                         / n_total
                     )
@@ -1251,10 +1257,10 @@ def load_and_split_data(
     test_size: float = 0.2,
     random_state: int = 42,
     index_path: str = "models/test_indices.json",
-) -> Tuple[pd.DataFrame, pd.Series]:
+) -> tuple[pd.DataFrame, pd.Series]:
     """Load test data using the exact indices saved during training.
 
-    FIX BUG-2: when stratify_splits=true, train.py uses a quantile-stratified
+    when stratify_splits=true, train.py uses a quantile-stratified
     split that is NOT reproducible by a plain train_test_split() call in
     evaluate.py — causing 81% of evaluate.py's 'test' rows to overlap with
     the training fold.
@@ -1312,7 +1318,7 @@ def load_and_split_data(
                 f"⚠️ Could not load test indices from {_index_file}: {_idx_err}\n"
                 f"   Falling back to re-splitting — metrics will not match training\n"
                 f"   when stratify_splits=true.\n"
-                f"   Fix: re-run train.py to regenerate test_indices.json, "
+                f"   re-run train.py to regenerate test_indices.json, "
                 f"then re-run evaluate.py."
             )
     else:
@@ -1321,7 +1327,7 @@ def load_and_split_data(
             f"   Falling back to re-splitting (random_state={random_state}).\n"
             f"   This produces a DIFFERENT test partition than train.py when\n"
             f"   stratify_splits=true — evaluation metrics will be biased.\n"
-            f"   Fix: re-run train.py, then re-run evaluate.py."
+            f"   re-run train.py, then re-run evaluate.py."
         )
 
     # ── Fallback: plain re-split ───────────────────────────────────────────────
@@ -1339,9 +1345,9 @@ def load_and_split_data(
 def calculate_academic_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    segment_mask: Optional[np.ndarray] = None,
+    segment_mask: np.ndarray | None = None,
     segment_name: str = "overall",
-) -> Dict[str, float]:
+) -> dict[str, Any]:
     """Calculate ML metrics (diagnostic only - not for decisions).
 
     predict.py v6.3.1 recommends: RMSE, MALE, SMAPE.
@@ -1349,7 +1355,7 @@ def calculate_academic_metrics(
     """
     if segment_mask is not None:
         if segment_mask.sum() == 0:
-            # FIX: Returning None here crashes all callers that subscript the result
+            # Returning None here crashes all callers that subscript the result
             # (e.g. hybrid_acad["rmse"]). Return a clearly-marked sentinel dict so
             # callers continue without branching, and log so it's visible.
             logger.warning(f"⚠️ Segment '{segment_name}' is empty — returning zero-filled metrics.")
@@ -1361,7 +1367,9 @@ def calculate_academic_metrics(
                 "mape": 0.0,
                 "smape": 0.0,
                 "male": 0.0,
-                "r2": float("nan"),  # Finding G: NaN is unambiguous; 0.0 silently passes R²<0 guards
+                "r2": float(
+                    "nan"
+                ),  # Finding G: NaN is unambiguous; 0.0 silently passes R²<0 guards
                 "mean_true": 0.0,
                 "mean_pred": 0.0,
                 "mean_error": 0.0,
@@ -1374,10 +1382,10 @@ def calculate_academic_metrics(
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mape = float(mean_absolute_percentage_error(y_true, y_pred) * 100)
-    # FIX H1/M2: pass segment_name so per-segment warnings are actionable
+    # pass segment_name so per-segment warnings are actionable
     smape = calculate_smape(y_true, y_pred, segment_name=segment_name)
     male = calculate_male(y_true, y_pred, segment_name=segment_name)
-    # FIX M2: guard against n=1 crash — r2_score raises UndefinedMetricWarning
+    # guard against n=1 crash — r2_score raises UndefinedMetricWarning
     # and returns NaN when called with a single sample. The guard was already
     # applied in calculate_segment_metrics() (line ~467) but was missing here
     # in calculate_academic_metrics(), the gate-aligned path called from
@@ -1409,7 +1417,7 @@ def calculate_smape(
 ) -> float:
     """Symmetric MAPE - Better than MAPE for insurance data.
 
-    FIX H1/M2 (v7.4.0): segment_name parameter added so that warnings emitted
+    segment_name parameter added so that warnings emitted
     by this function identify the failing risk tier, making the ops log
     immediately actionable (e.g. "⚠️ SMAPE = 110.0% > 100% [segment: low_risk]"
     instead of a bare percentage with no context).
@@ -1426,7 +1434,7 @@ def calculate_smape(
     smape_values = numerator[mask] / denominator[mask]
     smape_pct = float(np.mean(smape_values) * 100)
 
-    # FIX H1/M2: include segment tag in all threshold warnings
+    # include segment tag in all threshold warnings
     _seg_tag = f" [segment: {segment_name}]" if segment_name else ""
     if smape_pct > _SMAPE_ERROR_THRESHOLD:
         logger.error(
@@ -1445,7 +1453,7 @@ def calculate_male(
 ) -> float:
     """Mean Absolute Log Error - scale-invariant metric.
 
-    FIX H1/M2 (v7.4.0): segment_name parameter added so that warnings emitted
+    segment_name parameter added so that warnings emitted
     by this function identify the failing risk tier.
     """
     _seg_tag = f" [segment: {segment_name}]" if segment_name else ""
@@ -1470,7 +1478,7 @@ def calculate_male(
 class UnifiedEvaluator:
     """Unified evaluator with business-first focus"""
 
-    def __init__(self, business_config: BusinessConfig = None, config: Optional[Dict] = None):
+    def __init__(self, business_config: BusinessConfig | None = None, config: dict | None = None):
         self.business_config = business_config or BusinessConfig()
         self.business_calc = BusinessMetricsCalculator(self.business_config)
         # Cache the full config dict once at construction time so
@@ -1478,11 +1486,11 @@ class UnifiedEvaluator:
         # calculate_cost_weighted_error all share the same loaded dict.
         # In a 16-config sweep this eliminates 30+ redundant YAML parses.
         if config is not None:
-            self._cached_config: Optional[Dict] = config
+            self._cached_config: dict | None = config
         else:
             try:
                 self._cached_config = load_config()
-            except (OSError, IOError, ImportError, RuntimeError) as e:
+            except (OSError, ImportError, RuntimeError) as e:
                 logger.warning(f"⚠️ UnifiedEvaluator: could not pre-load config: {e}")
                 self._cached_config = {}
 
@@ -1492,11 +1500,11 @@ class UnifiedEvaluator:
         ml_preds: np.ndarray,
         hybrid_preds: np.ndarray,
         threshold: float = 4500.0,
-        calibration_info: Optional[Dict] = None,
+        calibration_info: dict | None = None,
         enable_segment_analysis: bool = True,
-        config: Optional[Dict] = None,
-        actuarial_info: Optional[Dict] = None,
-    ) -> Dict:
+        config: dict | None = None,
+        actuarial_info: dict | None = None,
+    ) -> dict:
         """Run comprehensive evaluation with calibration tracking"""
         # Use caller-supplied config, then cached, then lazy-load as last resort.
         if config is None:
@@ -1505,7 +1513,7 @@ class UnifiedEvaluator:
             try:
                 config = load_config()
                 self._cached_config = config
-            except (OSError, IOError, ImportError, RuntimeError) as e:
+            except (OSError, ImportError, RuntimeError) as e:
                 logger.warning(f"⚠️ Could not load config: {e}")
                 config = {}
 
@@ -1618,36 +1626,40 @@ class UnifiedEvaluator:
         # Numerically identical to the scalar path (verified to float precision).
         cfg = self.business_calc.config
         _loading = cfg.base_profit_margin
-        _admin   = cfg.admin_cost_per_policy
+        _admin = cfg.admin_cost_per_policy
 
         def _net_profit_vec(yt: np.ndarray, yp: np.ndarray) -> np.ndarray:
-            _err    = yp - yt
-            _ep     = np.where(yt > 0, _err / yt, 0.0)
-            _gp     = yp - yt + _loading * yp - _admin
-            _over   = _err > 0
+            _err = yp - yt
+            _ep = np.where(yt > 0, _err / yt, 0.0)
+            _gp = yp - yt + _loading * yp - _admin
+            _over = _err > 0
             _excess = np.maximum(np.where(_over, _ep, 0.0) - cfg.churn_threshold_pct, 0.0)
-            _cp     = np.where(
+            _cp = np.where(
                 _over,
                 np.minimum(_excess * cfg.churn_sensitivity, _MAX_CHURN_PROBABILITY),
                 0.0,
             )
-            _cc     = _cp * (yt * cfg.customer_lifetime_value_multiplier + cfg.customer_acquisition_cost)
-            _under  = _err < 0
-            _rev    = yp * (1.0 + _loading)
-            _bp     = np.abs(_err) * cfg.underpricing_penalty_multiplier
-            _mp     = _rev * 0.2
-            _up     = np.where(_under, np.minimum(_bp, _mp), 0.0)
-            _sev    = np.where(_under, np.abs(_ep), 0.0) > cfg.severe_underpricing_threshold_pct
-            _up     = np.where(_under & _sev, _up + cfg.severe_underpricing_penalty, _up)
-            _ae     = np.abs(_ep)
-            _bonus  = np.where(
+            _cc = _cp * (
+                yt * cfg.customer_lifetime_value_multiplier + cfg.customer_acquisition_cost
+            )
+            _under = _err < 0
+            _rev = yp * (1.0 + _loading)
+            _bp = np.abs(_err) * cfg.underpricing_penalty_multiplier
+            _mp = _rev * 0.2
+            _up = np.where(_under, np.minimum(_bp, _mp), 0.0)
+            _sev = np.where(_under, np.abs(_ep), 0.0) > cfg.severe_underpricing_threshold_pct
+            _up = np.where(_under & _sev, _up + cfg.severe_underpricing_penalty, _up)
+            _ae = np.abs(_ep)
+            _bonus = np.where(
                 _ae <= cfg.acceptable_error_band_pct / 2,
                 cfg.excellent_accuracy_bonus,
-                np.where(_ae <= cfg.acceptable_error_band_pct, cfg.excellent_accuracy_bonus * 0.5, 0.0),
+                np.where(
+                    _ae <= cfg.acceptable_error_band_pct, cfg.excellent_accuracy_bonus * 0.5, 0.0
+                ),
             )
-            return _gp - _cc - _up + _bonus
+            return np.asarray(_gp - _cc - _up + _bonus)
 
-        ml_profits_stat     = _net_profit_vec(y_true, ml_preds)
+        ml_profits_stat = _net_profit_vec(y_true, ml_preds)
         hybrid_profits_stat = _net_profit_vec(y_true, hybrid_preds)
         t_stat, p_value = stats.ttest_rel(ml_profits_stat, hybrid_profits_stat)
 
@@ -1677,10 +1689,10 @@ class UnifiedEvaluator:
 
     def generate_unified_report(
         self,
-        evaluation: Dict,
-        y_true: np.ndarray = None,
-        ml_preds: np.ndarray = None,
-        hybrid_preds: np.ndarray = None,
+        evaluation: dict,
+        y_true: np.ndarray | None = None,
+        ml_preds: np.ndarray | None = None,
+        hybrid_preds: np.ndarray | None = None,
         output_path: str = "reports/unified_evaluation.txt",
     ) -> str:
         """Generate comprehensive business-focused report (v7.4.0)"""
@@ -1693,7 +1705,7 @@ class UnifiedEvaluator:
         cal_info = evaluation.get("calibration_info", {})
         act_info = evaluation.get("actuarial_info", {})
 
-        # FIX 12: show calibration factor AND strategy
+        # show calibration factor AND strategy
         if cal_info.get("enabled"):
             strategy_label = cal_info.get("strategy", "unknown")
             lines.append(
@@ -1725,11 +1737,10 @@ class UnifiedEvaluator:
 
         # Finding F: +75% reads as "profit improvement" to an executive even when
         # both values are negative losses.  Append context note to prevent misread.
-        _ml_ppp_f   = ml_biz["profit_per_policy"]
-        _hy_ppp_f   = hybrid_biz["profit_per_policy"]
-        _sign_note  = (
-            " (loss reduced)" if _ml_ppp_f < 0 and _hy_ppp_f < 0 and _hy_ppp_f > _ml_ppp_f
-            else ""
+        _ml_ppp_f = ml_biz["profit_per_policy"]
+        _hy_ppp_f = hybrid_biz["profit_per_policy"]
+        _sign_note = (
+            " (loss reduced)" if _ml_ppp_f < 0 and _hy_ppp_f < 0 and _hy_ppp_f > _ml_ppp_f else ""
         )
 
         lines.append(
@@ -1766,7 +1777,7 @@ class UnifiedEvaluator:
             f"({'✅ Better' if hybrid_biz['churn_rate_pct'] < ml_biz['churn_rate_pct'] else '⚠️ Worse'})"
         )
 
-        # FIX 15: blend weight discrepancy
+        # blend weight discrepancy
         if act_info:
             configured_blend = act_info.get("configured_blend_ratio")
             effective_ml_wt = act_info.get("effective_avg_ml_weight")
@@ -1802,7 +1813,7 @@ class UnifiedEvaluator:
         male_delta = hybrid_acad.get("male", 0) - ml_acad.get("male", 0)
         smape_delta = hybrid_acad.get("smape", 0) - ml_acad.get("smape", 0)
 
-        lines.append(f"\n📐 ACADEMIC (diagnostic only — not for decisions):")
+        lines.append("\n📐 ACADEMIC (diagnostic only — not for decisions):")
         lines.append(
             f"   RMSE:        ML ${ml_acad['rmse']:>10,.2f}  →  "
             f"Hybrid ${hybrid_acad['rmse']:>10,.2f}  ({rmse_delta:+,.2f})"
@@ -1820,7 +1831,7 @@ class UnifiedEvaluator:
             f"Hybrid {hybrid_acad['mape']:>6.2f}% (diagnostic)"
         )
 
-        # FIX H2 (v7.4.0 / v7.4.1): flag MAPE/R² contradiction for investigation.
+        # flag MAPE/R² contradiction for investigation.
         # Previous version incorrectly labelled the test-set R² as "validation R²".
         # The test R² is computed from the held-out test predictions — a negative
         # value means the model is WORSE than predicting the mean, which is a
@@ -1844,7 +1855,7 @@ class UnifiedEvaluator:
                 f"'high_risk' segment predictions."
             )
 
-        # FIX H2 critical sub-alert: negative test R² is a first-class finding.
+        # negative test R² is a first-class finding.
         # R² < 0 means SS_residual > SS_total — the model's errors exceed the
         # variance of the target itself (i.e. worse than always predicting the mean).
         # This is almost always caused by a small number of catastrophically wrong
@@ -1863,12 +1874,12 @@ class UnifiedEvaluator:
                     if _hr_n > 0
                     else ""
                 )
-                + f"ACTION REQUIRED: re-train or re-calibrate the specialist model before "
-                f"ANY production deployment."
+                + "ACTION REQUIRED: re-train or re-calibrate the specialist model before "
+                "ANY production deployment."
             )
 
         # =====================================================================
-        # SEGMENT RISK ALERTS — H1 FIX (v7.4.0)
+        # SEGMENT RISK ALERTS
         # Surface any segment where SMAPE > 80% so the risk tier is visible
         # to decision-makers and not buried in INFO-level log lines.
         # ml_segs is already resolved above (ahead of H2 diagnostic).
@@ -1964,14 +1975,14 @@ class UnifiedEvaluator:
                 - tail_ml["loss_drivers"]["underpricing_penalties"]
             )
 
-            lines.append(f"\n   Underpricing penalties:")
+            lines.append("\n   Underpricing penalties:")
             lines.append(
                 f"      ML: ${tail_ml['loss_drivers']['underpricing_penalties']:>12,.0f}  →  "
                 f"Hybrid: ${tail_hybrid['loss_drivers']['underpricing_penalties']:>12,.0f}  "
                 f"(${penalty_delta_tail:+,.0f})"
             )
 
-            lines.append(f"\n   High churn risk (>50% probability):")
+            lines.append("\n   High churn risk (>50% probability):")
             lines.append(
                 f"      ML: {tail_ml['high_churn_policies']:>5} policies  →  "
                 f"Hybrid: {tail_hybrid['high_churn_policies']:>5} policies"
@@ -1982,7 +1993,7 @@ class UnifiedEvaluator:
                 - tail_ml["loss_drivers"]["churn_losses"]
             )
 
-            lines.append(f"\n   Total churn costs:")
+            lines.append("\n   Total churn costs:")
             lines.append(
                 f"      ML: ${tail_ml['loss_drivers']['churn_losses']:>12,.0f}  →  "
                 f"Hybrid: ${tail_hybrid['loss_drivers']['churn_losses']:>12,.0f}  "
@@ -1991,7 +2002,7 @@ class UnifiedEvaluator:
 
         # =====================================================================
         # DEPLOYMENT READINESS — 5 metrics
-        # FIX M1 (v7.4.0): RMSE removed from deployment gate — the report itself
+        # RMSE removed from deployment gate — the report itself
         # labels it "diagnostic only — not for decisions". Replaced with SMAPE,
         # which is symmetric, bounded, and insurance-appropriate. A $0.33 RMSE
         # delta should not block production deployment.
@@ -2013,17 +2024,21 @@ class UnifiedEvaluator:
         # count of severely underpriced policies (error_pct < -severe_threshold),
         # staying entirely within the business domain.
         _sev_threshold = self.business_config.severe_underpricing_threshold_pct
-        # P1/P2 FIX: use the vectorised calculate_portfolio_metrics instead of
+        # use the vectorised calculate_portfolio_metrics instead of
         # per-row Python loops (was two O(n) list-comps feeding a third sum() pass).
         # We derive severe counts from the already-computed portfolio results, which
         # avoids a third full pass over y_true.
-        _ml_err_pct  = np.where(y_true > 0, (ml_preds    - y_true) / y_true, 0.0)
-        _hy_err_pct  = np.where(y_true > 0, (hybrid_preds - y_true) / y_true, 0.0)
-        n_severe_ml     = int(np.sum(_ml_err_pct  < -_sev_threshold))
-        n_severe_hybrid = int(np.sum(_hy_err_pct  < -_sev_threshold))
+        if y_true is None or ml_preds is None or hybrid_preds is None:
+            _ml_err_pct = np.zeros(1)
+            _hy_err_pct = np.zeros(1)
+        else:
+            _ml_err_pct = np.where(y_true > 0, (ml_preds - y_true) / y_true, 0.0)
+            _hy_err_pct = np.where(y_true > 0, (hybrid_preds - y_true) / y_true, 0.0)
+        n_severe_ml = int(np.sum(_ml_err_pct < -_sev_threshold))
+        n_severe_hybrid = int(np.sum(_hy_err_pct < -_sev_threshold))
         win_tail_risk = n_severe_hybrid <= n_severe_ml
 
-        # BUG FIX (v7.3.1): did the hybrid model REDUCE underpricing penalties vs ML?
+        # did the hybrid model REDUCE underpricing penalties vs ML?
         actuarial_aggressive_flag = act_info.get("actuarial_aggressive", False)
         win_actuarial = (
             hybrid_biz["total_underpricing_penalty"] < ml_biz["total_underpricing_penalty"]
@@ -2032,14 +2047,14 @@ class UnifiedEvaluator:
         wins = sum([win_profit, win_churn, win_biz_score, win_tail_risk, win_actuarial])
         deployment_confidence = wins / 5.0
 
-        # BUG FIX (v7.3.1): use abs(ml_ppp) as denominator
+        # use abs(ml_ppp) as denominator
         ml_ppp = ml_biz["profit_per_policy"]
         hybrid_ppp = hybrid_biz["profit_per_policy"]
         if ml_ppp != 0:
             profit_improvement_pct = ((hybrid_ppp - ml_ppp) / abs(ml_ppp)) * 100
         else:
             profit_improvement_pct = 0.0
-        # FIX M3 (v7.4.0): removed dead variable `profit_improvement` (was computed
+        # removed dead variable `profit_improvement` (was computed
         # and immediately unused; the "keep downstream compat" comment was misleading).
 
         if ml_biz["total_underpricing_penalty"] > 0:
@@ -2090,7 +2105,7 @@ class UnifiedEvaluator:
         ) < ml_acad.get("male", float("inf"))
 
         if not biz_win:
-            # FIX H4: The previous message "Business value insufficient" was
+            # The previous message "Business value insufficient" was
             # self-contradictory when profit_delta was POSITIVE — it implied hybrid
             # was unprofitable while actually showing +$917K profit gain. The real
             # rejection reason when biz_win=False is that hybrid's BizScore is lower
@@ -2114,7 +2129,9 @@ class UnifiedEvaluator:
                     "in transition zone) before reconsidering hybrid deployment."
                 )
             else:
-                lines.append(f"   Profit delta: ${profit_delta:+,.0f} — hybrid is also less profitable.")
+                lines.append(
+                    f"   Profit delta: ${profit_delta:+,.0f} — hybrid is also less profitable."
+                )
         elif actuarial_aggressive_flag and deployment_confidence < 0.60:
             lines.append("\n🚫 DEPLOYMENT BLOCKED")
             lines.append(
@@ -2165,7 +2182,7 @@ class UnifiedEvaluator:
 
         return report_text
 
-    def analyze_profit_distribution(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
+    def analyze_profit_distribution(self, y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         """Identify where losses are coming from.
 
         Finding B: replaced the O(n) row-by-row Python loop that built a DataFrame
@@ -2173,36 +2190,36 @@ class UnifiedEvaluator:
         mirroring the calculate_portfolio_metrics() vectorised path.  Result is
         numerically identical and ~40× faster on a 10K-policy batch.
         """
-        cfg   = self.business_config
-        yt    = np.asarray(y_true, dtype=float)
-        yp    = np.asarray(y_pred, dtype=float)
+        cfg = self.business_config
+        yt = np.asarray(y_true, dtype=float)
+        yp = np.asarray(y_pred, dtype=float)
         _loading = cfg.base_profit_margin
-        _admin   = cfg.admin_cost_per_policy
+        _admin = cfg.admin_cost_per_policy
 
-        err   = yp - yt
-        ep    = np.where(yt > 0, err / yt, 0.0)
+        err = yp - yt
+        ep = np.where(yt > 0, err / yt, 0.0)
 
         # Gross profit
-        gp    = yp - yt + _loading * yp - _admin
+        gp = yp - yt + _loading * yp - _admin
 
         # Churn
-        over  = err > 0
+        over = err > 0
         excess = np.maximum(np.where(over, ep, 0.0) - cfg.churn_threshold_pct, 0.0)
-        cp    = np.where(over, np.minimum(excess * cfg.churn_sensitivity, _MAX_CHURN_PROBABILITY), 0.0)
-        clv   = yt * cfg.customer_lifetime_value_multiplier
-        cc    = cp * (clv + cfg.customer_acquisition_cost)
+        cp = np.where(over, np.minimum(excess * cfg.churn_sensitivity, _MAX_CHURN_PROBABILITY), 0.0)
+        clv = yt * cfg.customer_lifetime_value_multiplier
+        cc = cp * (clv + cfg.customer_acquisition_cost)
 
         # Underpricing penalty
         under = err < 0
-        rev   = yp * (1.0 + _loading)
-        bp    = np.abs(err) * cfg.underpricing_penalty_multiplier
-        mp    = rev * 0.2
-        up    = np.where(under, np.minimum(bp, mp), 0.0)
-        sev   = np.where(under, np.abs(ep), 0.0) > cfg.severe_underpricing_threshold_pct
-        up    = np.where(under & sev, up + cfg.severe_underpricing_penalty, up)
+        rev = yp * (1.0 + _loading)
+        bp = np.abs(err) * cfg.underpricing_penalty_multiplier
+        mp = rev * 0.2
+        up = np.where(under, np.minimum(bp, mp), 0.0)
+        sev = np.where(under, np.abs(ep), 0.0) > cfg.severe_underpricing_threshold_pct
+        up = np.where(under & sev, up + cfg.severe_underpricing_penalty, up)
 
         # Accuracy bonus
-        ae    = np.abs(ep)
+        ae = np.abs(ep)
         bonus = np.where(
             ae <= cfg.acceptable_error_band_pct / 2,
             cfg.excellent_accuracy_bonus,
@@ -2211,21 +2228,21 @@ class UnifiedEvaluator:
 
         net_profit = gp - cc - up + bonus
 
-        # E2 FIX: use config value, not hardcoded -0.50
+        # use config value, not hardcoded -0.50
         _sev = cfg.severe_underpricing_threshold_pct
 
         return {
             "high_churn_policies": int(np.sum(cp > 0.5)),
-            "severe_underpricing":  int(np.sum(ep < -_sev)),
-            "profit_quartiles":     {
+            "severe_underpricing": int(np.sum(ep < -_sev)),
+            "profit_quartiles": {
                 0.25: float(np.percentile(net_profit, 25)),
                 0.50: float(np.percentile(net_profit, 50)),
                 0.75: float(np.percentile(net_profit, 75)),
             },
             "loss_drivers": {
-                "churn_losses":           float(np.sum(cc)),
+                "churn_losses": float(np.sum(cc)),
                 "underpricing_penalties": float(np.sum(up)),
-                "accuracy_bonuses":       float(np.sum(bonus)),
+                "accuracy_bonuses": float(np.sum(bonus)),
             },
         }
 
@@ -2236,7 +2253,7 @@ class UnifiedEvaluator:
 
 
 def create_unified_visualization(
-    evaluation: Dict,
+    evaluation: dict,
     y_true: np.ndarray,
     ml_preds: np.ndarray,
     hybrid_preds: np.ndarray,
@@ -2245,7 +2262,7 @@ def create_unified_visualization(
     """Create comprehensive visualization"""
     import warnings
 
-    # FIX: module="matplotlib" never fires because matplotlib uses stacklevel=2,
+    # module="matplotlib" never fires because matplotlib uses stacklevel=2,
     # which attributes the glyph warning to the *call site* (this file, not matplotlib).
     # Correct approach: (a) filter by message pattern, scoped with catch_warnings so
     # we don't pollute the global warning state for the rest of the process, and
@@ -2407,7 +2424,7 @@ def create_unified_visualization(
         ax9 = fig.add_subplot(gs[2, 2])
         ax9.axis("off")
 
-        # FIX: ✅/❌ emoji cause "Glyph missing from font" UserWarnings because
+        # ✅/❌ emoji cause "Glyph missing from font" UserWarnings because
         # matplotlib's default DejaVu Sans does not include these Unicode code points.
         # Using ASCII-safe winner/loser labels eliminates the warning at the source.
         def _winner(condition: bool, winner_label: str = "Hybrid", loser_label: str = "ML") -> str:
@@ -2482,7 +2499,7 @@ def create_unified_visualization(
                 import time
 
                 time.sleep(0.05)
-            except (OSError, IOError, PermissionError) as _del_err:
+            except (OSError, PermissionError) as _del_err:
                 logger.debug(
                     f"Could not remove existing plot file before overwrite "
                     f"({save_path_obj.name}): {_del_err}"
@@ -2506,11 +2523,11 @@ def create_unified_visualization(
 
 
 def check_ci_coverage(
-    pipeline: "PredictionPipeline",
+    pipeline: PredictionPipeline,
     X_test: pd.DataFrame,
     y_true: np.ndarray,
     confidence_level: float = 0.90,
-) -> Dict:
+) -> dict:
     """Verify empirical CI coverage against the nominal conformal level on the test set.
 
     T2-C (v7.5.0): This check was absent from the evaluation pipeline entirely.
@@ -2539,7 +2556,9 @@ def check_ci_coverage(
         ci_result = pipeline.predict_with_intervals(X_test, confidence_level=confidence_level)
         ci = ci_result.get("confidence_intervals") or {}
         if "lower_bound" not in ci:
-            return {"error": "No CI available from predict_with_intervals — check conformal artifact"}
+            return {
+                "error": "No CI available from predict_with_intervals — check conformal artifact"
+            }
 
         lower = np.array(ci["lower_bound"])
         upper = np.array(ci["upper_bound"])
@@ -2558,15 +2577,15 @@ def check_ci_coverage(
         gap = empirical - confidence_level
 
         result = {
-            "nominal":    confidence_level,
-            "empirical":  round(empirical, 4),
-            "gap":        round(gap, 4),
+            "nominal": confidence_level,
+            "empirical": round(empirical, 4),
+            "gap": round(gap, 4),
             "mean_width": round(ci.get("mean_interval_width", float("nan")), 2),
             "median_width": round(ci.get("median_interval_width", float("nan")), 2),
-            "method":     ci.get("method", "unknown"),
-            "n_samples":  int(len(y_true)),
-            "n_covered":  int(np.sum(covered)),
-            "valid":      empirical >= confidence_level - 0.02,
+            "method": ci.get("method", "unknown"),
+            "n_samples": int(len(y_true)),
+            "n_covered": int(np.sum(covered)),
+            "valid": empirical >= confidence_level - 0.02,
         }
 
         if not result["valid"]:
@@ -2603,7 +2622,7 @@ def main():
     parser.add_argument("--data-path", default="data/raw/insurance.csv")
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--random-state", type=int, default=42)
-    # FIX BUG-2: path to test_indices.json written by train.py.
+    # path to test_indices.json written by train.py.
     parser.add_argument(
         "--index-path",
         default="models/test_indices.json",
@@ -2618,7 +2637,7 @@ def main():
     parser.add_argument("--blend-ratio", type=float, default=None)
     parser.add_argument("--calibration-factor", type=float, default=None)
     parser.add_argument("--no-calibration", action="store_true")
-    # FIX 18: add calibration strategy CLI flag
+    # add calibration strategy CLI flag
     _strat_grp = parser.add_mutually_exclusive_group()
     _strat_grp.add_argument(
         "--apply-to-ml-only",
@@ -2674,11 +2693,11 @@ def main():
             print("\n💡 Edit hybrid_predictor.business_config in config.yaml to modify")
             sys.exit(0)
 
-        # E1 FIX: ml_pipeline was assigned at line ~2154, nine lines AFTER
+        # ml_pipeline was assigned at line ~2154, nine lines AFTER
         # args.compare_configs referenced it at line ~2145.  Every invocation
         # of `python evaluate.py --compare-configs` raised:
         #   NameError: name 'ml_pipeline' is not defined
-        # Fix: hoist PredictionPipeline() construction above the compare_configs
+        # hoist PredictionPipeline() construction above the compare_configs
         # branch so it is available for both the sweep path and the normal path.
         # The STEP labels are renumbered accordingly (1→pipeline, 2→data).
         print("\n[STEP 1] Initializing ML pipeline...")
@@ -2689,7 +2708,7 @@ def main():
             X_test, y_test = load_and_split_data(
                 args.data_path, args.test_size, args.random_state, args.index_path
             )
-            df_comp = compare_multiple_configurations(X_test, y_test, ml_pipeline, business_config)
+            compare_multiple_configurations(X_test, y_test, ml_pipeline, business_config)
             sys.exit(0)
 
         print("\n[STEP 2] Loading data...")
@@ -2698,7 +2717,9 @@ def main():
         )
 
         print("\n[STEP 3] Getting ML predictions...")
-        ml_result = _predict_in_batches(ml_pipeline, X_test, inference_limit=_inference_limit, return_reliability=False)
+        ml_result = _predict_in_batches(
+            ml_pipeline, X_test, inference_limit=_inference_limit, return_reliability=False
+        )
         ml_preds = np.array(ml_result["predictions"])
 
         print("\n[STEP 4] Initializing hybrid predictor...")
@@ -2709,7 +2730,7 @@ def main():
             calibration_enabled = False
             logger.warning("⚠️ Calibration DISABLED")
         elif args.calibration_factor is not None:
-            # B5 FIX: was `elif args.calibration_factor:` which is a falsy test.
+            # was `elif args.calibration_factor:` which is a falsy test.
             # --calibration-factor 0.0 evaluated as False and fell through to the
             # config-read branch, silently ignoring the explicit CLI override.
             # The validate step below (HybridPredictor._validate_config) will raise
@@ -2720,7 +2741,7 @@ def main():
             calibration_enabled = _cal_cfg.get("enabled", True)
             calibration_factor = float(_cal_cfg.get("factor", 1.00))
 
-        # FIX 6: read apply_to_ml_only from CLI → config → default True
+        # read apply_to_ml_only from CLI → config → default True
         if args.apply_to_ml_only is not None:
             apply_to_ml_only = args.apply_to_ml_only
         else:
@@ -2732,7 +2753,7 @@ def main():
             f"{calibration_factor:.4f}  [Strategy: {strategy_label}]"
         )
 
-        # FIX 6b: pass apply_to_ml_only via config dict so HybridPredictor
+        # pass apply_to_ml_only via config dict so HybridPredictor
         # reads it from calibration_config.get("apply_to_ml_only") in __init__
         _override_config = dict(hybrid_config)
         _override_config["calibration"] = dict(_cal_cfg)
@@ -2750,12 +2771,15 @@ def main():
 
         print("\n[STEP 5] Getting hybrid predictions...")
         hybrid_result = _predict_in_batches(
-            hybrid, X_test, inference_limit=_inference_limit,
-            return_components=True, return_reliability=True,
+            hybrid,
+            X_test,
+            inference_limit=_inference_limit,
+            return_components=True,
+            return_reliability=True,
         )
         hybrid_preds = np.array(hybrid_result["predictions"])
 
-        # Post-merge fixup: effective_avg_ml_weight is blend_diagnostics["avg_ml_weight"]
+        # effective_avg_ml_weight is blend_diagnostics["avg_ml_weight"]
         # computed per-chunk by HybridPredictor.  Recompute the true full-batch value from
         # the concatenated ml_weights array (present in components when return_components=True).
         if (
@@ -2769,7 +2793,7 @@ def main():
                 np.mean(_full_ml_weights)
             )
 
-        # ── FIX C2 (v7.4.0 / v7.4.1): OOD upper-bound guard ────────────────
+        # OOD upper-bound guard ────────────────
         # The scale validator only checks sign/units; it passes predictions that
         # exceed the training domain.  Resolve the training-set max from the
         # FeatureEngineer that is always present on PredictionPipeline.
@@ -2852,7 +2876,7 @@ def main():
                 f"downstream metrics may be unreliable for this subset."
             )
 
-        # ── FIX C1 (v7.4.0 / v7.4.1): weight arithmetic anomaly diagnostic ──
+        # weight arithmetic anomaly diagnostic ──
         # Previous version gated the entire check on _reliability.get(key) which
         # returns None when HybridPredictor nests the key differently (e.g. under
         # routing sub-dict), silently skipping the diagnostic entirely.
@@ -2877,7 +2901,7 @@ def main():
                 f"(iii) routing weight accounting double-counts specialist policies."
             )
 
-        # FIX 7: build calibration_info from predict result keys directly
+        # build calibration_info from predict result keys directly
         calibration_info = {
             "enabled": hybrid_result.get("calibration_applied", calibration_enabled),
             "factor": hybrid_result.get("calibration_factor", calibration_factor),
@@ -2889,10 +2913,10 @@ def main():
             calibration_info["mean_effect"] = float(np.mean(hybrid_preds - uncal))
             calibration_info["total_effect"] = float(np.sum(hybrid_preds - uncal))
 
-        # FIX 8-10: extract actuarial_info from predict result
+        # extract actuarial_info from predict result
         reliability = hybrid_result.get("reliability", {})
 
-        # FIX M7: recompute tail_risk_warning from the FULL merged hybrid_preds
+        # recompute tail_risk_warning from the FULL merged hybrid_preds
         # array rather than from the per-chunk warning dict.
         # When n > inference_limit (e.g. 100K policies, limit=10K), _predict_in_batches
         # splits into multiple chunks. The tail_risk_warning in the merged result
@@ -2900,8 +2924,8 @@ def main():
         # count is that chunk's count only — not the full portfolio count.
         # At 100K samples (10 chunks), this silently underreports by up to 10×.
         #
-        # Fix: recompute the count directly from the full arrays.
-        # Uses the same anchor as predict.py C4 fix: safe_minimum = ml_preds * 0.5.
+        # recompute the count directly from the full arrays.
+        # Uses the same anchor as predict.py fix: safe_minimum = ml_preds * 0.5.
         # (Actuarial is not available here; ml_preds is the best unbiased proxy.)
         _tail_threshold_pct = float(
             config.get("hybrid_predictor", {})
@@ -2921,8 +2945,10 @@ def main():
                 )
             )
             _severity_full = (
-                "CRITICAL" if _n_underpriced_full > _n_total_full * 0.10
-                else "HIGH" if _n_underpriced_full > _n_total_full * 0.05
+                "CRITICAL"
+                if _n_underpriced_full > _n_total_full * 0.10
+                else "HIGH"
+                if _n_underpriced_full > _n_total_full * 0.05
                 else "MODERATE"
             )
             _tail_risk_warning_full = {
@@ -2947,7 +2973,7 @@ def main():
             "actuarial_conservativeness_ratio": hybrid_result.get(
                 "actuarial_conservativeness_ratio"
             ),
-            # M7 fix: use full-batch recomputed value, not per-chunk dict
+            # use full-batch recomputed value, not per-chunk dict
             "tail_risk_warning": _tail_risk_warning_full,
             "actuarial_conservative": reliability.get("actuarial_conservative", False),
             "actuarial_aggressive": reliability.get("actuarial_aggressive", False),
@@ -2955,7 +2981,7 @@ def main():
             "effective_avg_ml_weight": reliability.get("effective_avg_ml_weight"),
         }
 
-        # ── FIX C1 part (b): weight arithmetic — now that actuarial_info is
+        # weight arithmetic — now that actuarial_info is
         # built, effective_avg_ml_weight is resolved from all possible key paths.
         _c1_eff_wt = actuarial_info.get("effective_avg_ml_weight")
         if _c1_eff_wt is not None and _c1_eff_wt > 0 and _c1_ratio > 1.4:
@@ -2966,7 +2992,7 @@ def main():
                 logger.warning(
                     f"⚠️  [C1] WEIGHT ARITHMETIC: effective ML weight={_c1_eff_wt:.0%}. "
                     f"Implied actuarial mean=${_c1_implied_act:,.0f}. "
-                    f"{'ANOMALOUS — exceeds 2× training max (${:,.0f})'.format(_c1_max_plausible) if _c1_implied_act > _c1_max_plausible else 'Within plausible range (${:,.0f})'.format(_c1_max_plausible)}. "
+                    f"{f'ANOMALOUS — exceeds 2× training max (${_c1_max_plausible:,.0f})' if _c1_implied_act > _c1_max_plausible else f'Within plausible range (${_c1_max_plausible:,.0f})'}. "
                     f"Investigate SegmentRouter: specialist predictions may be "
                     f"counted as ML-dominant while still receiving actuarial adjustment."
                 )
@@ -2987,7 +3013,7 @@ def main():
         # T2-C: verify empirical CI coverage on the test set (was absent entirely).
         # Coverage check runs against the ML pipeline's conformal artifact.
         # A gap > 2% is a red flag; see check_ci_coverage() docstring for causes.
-        # FIX U-06: routes.py reads CI_CONFIDENCE_LEVEL from env var (default 0.90).
+        # routes.py reads CI_CONFIDENCE_LEVEL from env var (default 0.90).
         # evaluate.py was hardcoded to 0.90 — if the API is deployed with a
         # different level (e.g. CI_CONFIDENCE_LEVEL=0.95), evaluate.py would
         # report "valid" at 0.90 while production CIs under-cover at 0.95.
@@ -3028,7 +3054,7 @@ def main():
         # Attach CI coverage to the evaluation dict for JSON output and MLflow logging
         evaluation["ci_coverage"] = ci_coverage
 
-        # FIX U-12: hybrid_result["tail_risk_warning"] is the value from whichever
+        # hybrid_result["tail_risk_warning"] is the value from whichever
         # chunk first triggered a warning in _predict_in_batches — its
         # policies_below_threshold count reflects that chunk only, not the full
         # portfolio.  The full-portfolio recount (_tail_risk_warning_full) was
@@ -3060,11 +3086,11 @@ def main():
 
         def convert_types(obj):
             """Convert numpy/pandas types to JSON-serializable Python types"""
-            if isinstance(obj, (np.integer, np.floating)):
+            if isinstance(obj, np.integer | np.floating):
                 return float(obj)
             elif isinstance(obj, np.ndarray):
                 return obj.tolist()
-            elif isinstance(obj, (bool, np.bool_)):
+            elif isinstance(obj, bool | np.bool_):
                 return bool(obj)
             elif isinstance(obj, dict):
                 return {k: convert_types(v) for k, v in obj.items()}
@@ -3072,7 +3098,7 @@ def main():
                 return [convert_types(item) for item in obj]
             elif obj is None:
                 return None
-            elif isinstance(obj, (str, int, float)):
+            elif isinstance(obj, str | int | float):
                 return obj
             else:
                 logger.warning(f"Unknown type {type(obj)}, converting to string")
@@ -3097,21 +3123,20 @@ def main():
                 _mle.create_experiment(_eexp)
             _mle.set_experiment(_eexp)
 
-            _sf = lambda v: (
-                float(v) if isinstance(v, (int, float)) and _math.isfinite(float(v)) else None
-            )
+            def _sf(v):
+                return float(v) if isinstance(v, int | float) and _math.isfinite(float(v)) else None
 
             with _mle.start_run(run_name="unified_evaluation"):
                 _em: dict[str, float] = {}
 
                 # Academic metrics — ML and Hybrid
-                # N4 FIX: evaluation["academic"]["ml"] has shape
+                # evaluation["academic"]["ml"] has shape
                 # {"overall": {metrics}, "low_value": {metrics}, "high_value": {metrics}}.
                 # The original code passed that outer dict as _src, so _src.get("rmse")
                 # always returned None and every academic metric was silently dropped.
-                # Fix: drill into ".overall" before iterating metric keys.
+                # drill into ".overall" before iterating metric keys.
                 for _pfx, _src in [
-                    ("ml",     evaluation.get("academic", {}).get("ml",     {}).get("overall", {})),
+                    ("ml", evaluation.get("academic", {}).get("ml", {}).get("overall", {})),
                     ("hybrid", evaluation.get("academic", {}).get("hybrid", {}).get("overall", {})),
                 ]:
                     for _k in (
@@ -3172,14 +3197,14 @@ def main():
                     _em["profit_delta_hybrid_vs_ml"] = _hyp - _mlp
 
                 # Segment-level metrics
-                # N5 FIX: evaluation["segment_analysis"] has shape
+                # evaluation["segment_analysis"] has shape
                 # {"ml": {seg_name: flat_metrics}, "hybrid": {seg_name: flat_metrics}}.
                 # The original loop iterated the OUTER level ("ml", "hybrid") and
                 # treated each full segment-dict as a single segment, then looked for
                 # "academic" and "business.overall" sub-keys that don't exist in
                 # calculate_segment_metrics output (metrics are flat).  Every seg_*
                 # key was silently None and dropped on every run.
-                # Fix: add the missing inner loop over segment names and drop the
+                # add the missing inner loop over segment names and drop the
                 # non-existent "academic"/"business" wrappers.
                 for _pfx, _seg_dict in evaluation.get("segment_analysis", {}).items():
                     if not isinstance(_seg_dict, dict):
@@ -3293,7 +3318,7 @@ def main():
 
         print("\n" + report)
 
-        # FIX M4 (v7.4.0): Suppress calibration impact block when factor == 1.0.
+        # Suppress calibration impact block when factor == 1.0.
         # Previously printed "+$0.00/policy" on every ML-only run, adding noise
         # without information. The guard now requires a non-trivial factor.
         if (
@@ -3339,13 +3364,13 @@ def main():
         ml_biz = evaluation["business"]["ml"]["overall"]
         hybrid_biz = evaluation["business"]["hybrid"]["overall"]
 
-        # FIX C2: deployment_confidence and wins are local variables inside
+        # deployment_confidence and wins are local variables inside
         # generate_unified_report() (evaluate_comprehensive method, lines ~2007-2008)
         # and are NOT returned in the evaluation dict by evaluate_comprehensive()
         # (return dict at line ~1634 has no such keys).  Every non-business-focus
         # run crashed with:  NameError: name 'deployment_confidence' is not defined
         #
-        # Fix: recompute the identical 5-metric gate here from data already in
+        # recompute the identical 5-metric gate here from data already in
         # scope in main().  All five inputs are derivable from evaluation dict keys
         # that ARE returned (business.ml.overall / business.hybrid.overall) plus
         # the y_test / ml_preds / hybrid_preds arrays assigned earlier in main().
@@ -3354,23 +3379,17 @@ def main():
             .get("business_config", {})
             .get("severe_underpricing_threshold_pct", 0.50)
         )
-        _y_true_main   = y_test.values
-        _ml_err_pct    = np.where(
-            _y_true_main > 0, (ml_preds - _y_true_main) / _y_true_main, 0.0
-        )
-        _hy_err_pct    = np.where(
-            _y_true_main > 0, (hybrid_preds - _y_true_main) / _y_true_main, 0.0
-        )
-        _win_profit    = hybrid_biz["total_net_profit"]           > ml_biz["total_net_profit"]
-        _win_churn     = hybrid_biz["churn_rate_pct"]              < ml_biz["churn_rate_pct"]
-        _win_biz_score = hybrid_biz["business_value_score"]       > ml_biz["business_value_score"]
-        _win_tail_risk = (
-            int(np.sum(_hy_err_pct < -_sev_threshold_main))
-            <= int(np.sum(_ml_err_pct < -_sev_threshold_main))
+        _y_true_main = y_test.values
+        _ml_err_pct = np.where(_y_true_main > 0, (ml_preds - _y_true_main) / _y_true_main, 0.0)
+        _hy_err_pct = np.where(_y_true_main > 0, (hybrid_preds - _y_true_main) / _y_true_main, 0.0)
+        _win_profit = hybrid_biz["total_net_profit"] > ml_biz["total_net_profit"]
+        _win_churn = hybrid_biz["churn_rate_pct"] < ml_biz["churn_rate_pct"]
+        _win_biz_score = hybrid_biz["business_value_score"] > ml_biz["business_value_score"]
+        _win_tail_risk = int(np.sum(_hy_err_pct < -_sev_threshold_main)) <= int(
+            np.sum(_ml_err_pct < -_sev_threshold_main)
         )
         _win_actuarial = (
-            hybrid_biz["total_underpricing_penalty"]
-            < ml_biz["total_underpricing_penalty"]
+            hybrid_biz["total_underpricing_penalty"] < ml_biz["total_underpricing_penalty"]
         )
         wins = (
             int(_win_profit)
@@ -3387,7 +3406,7 @@ def main():
         print(
             f"   Profit Delta: ${hybrid_biz['total_net_profit'] - ml_biz['total_net_profit']:,.0f}"
         )
-        print(f"\n   Files saved:")
+        print("\n   Files saved:")
         print(f"      - {report_path}")
         print(f"      - {plot_path}")
         print(f"      - {summary_path}")
@@ -3398,10 +3417,10 @@ def main():
                 0 if hybrid_biz["business_value_score"] > ml_biz["business_value_score"] else 1
             )
         else:
-            # FIX F-01: Default CI path previously exited 0 unconditionally,
+            # Default CI path previously exited 0 unconditionally,
             # meaning no evaluation outcome — low confidence, bad BizScore, "DO
             # NOT DEPLOY" recommendation — could ever block the pipeline.
-            # Fix: exit 1 when deployment_confidence is below HIGH threshold
+            # exit 1 when deployment_confidence is below HIGH threshold
             # (< 0.80, i.e. fewer than 4/5 metric wins).  This makes the
             # 5-metric gate actually enforce CI pass/fail.
             # MODERATE (0.60–0.80) still exits 0 because those cases pass with
@@ -3450,7 +3469,7 @@ def main():
                 )
                 sys.exit(0)
 
-    except (OSError, ValueError, RuntimeError, AttributeError, IOError) as e:
+    except (OSError, ValueError, RuntimeError, AttributeError) as e:
         logger.error(f"❌ Error: {e}", exc_info=True)
         sys.exit(1)
 

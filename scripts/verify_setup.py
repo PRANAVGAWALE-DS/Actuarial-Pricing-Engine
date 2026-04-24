@@ -54,9 +54,9 @@ def read(path: str) -> str | None:
 def active_lines(text: str) -> list[str]:
     """Non-empty, non-comment lines with comment suffixes stripped."""
     return [
-        l.split("#")[0].strip()
-        for l in text.splitlines()
-        if l.strip() and not l.strip().startswith("#")
+        line.split("#")[0].strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
     ]
 
 
@@ -70,14 +70,14 @@ def check_pyproject() -> None:
     active = active_lines(t)
 
     # Critical: mlflow-skinny removed
-    if any("mlflow-skinny" in l for l in active):
+    if any("mlflow-skinny" in line for line in active):
         fail(f, "mlflow-skinny removed", "still present in active lines")
     else:
         ok(f, "mlflow-skinny removed")
 
     # High: statsmodels, click present
     for pkg in ["statsmodels", "click"]:
-        if any(pkg in l for l in active):
+        if any(pkg in line for line in active):
             ok(f, f"{pkg} present")
         else:
             fail(f, f"{pkg} present", "missing from dependencies")
@@ -90,8 +90,8 @@ def check_pyproject() -> None:
         "insurance-dashboard",
     ]
     for ep in dead:
-        if any(ep in l for l in active):
-            fail(f, f"dead entry point removed", f"{ep} still present")
+        if any(ep in line for line in active):
+            fail(f, "dead entry point removed", f"{ep} still present")
         else:
             ok(f, f"dead entry point '{ep}' removed")
 
@@ -111,7 +111,7 @@ def check_requirements() -> None:
 
     active = active_lines(t)
 
-    if any("mlflow-skinny" in l for l in active):
+    if any("mlflow-skinny" in line for line in active):
         fail(f, "mlflow-skinny removed", "still present")
     else:
         ok(f, "mlflow-skinny removed")
@@ -135,7 +135,7 @@ def check_requirements() -> None:
         )
 
     for pkg in ["statsmodels", "click"]:
-        if any(l.startswith(pkg) for l in active):
+        if any(line.startswith(pkg) for line in active):
             ok(f, f"{pkg} present")
         else:
             fail(f, f"{pkg} present", "missing")
@@ -177,9 +177,9 @@ def check_env() -> None:
 
     # No duplicate keys
     keys = [
-        l.split("=")[0].strip()
-        for l in t.splitlines()
-        if l.strip() and not l.startswith("#") and "=" in l
+        line.split("=")[0].strip()
+        for line in t.splitlines()
+        if line.strip() and not line.startswith("#") and "=" in line
     ]
     dupes = {k for k in keys if keys.count(k) > 1}
     if dupes:
@@ -239,14 +239,14 @@ def check_env_example() -> None:
     env_t = read(".env")
     if env_t:
         env_keys = {
-            l.split("=")[0].strip()
-            for l in env_t.splitlines()
-            if l.strip() and not l.startswith("#") and "=" in l
+            line.split("=")[0].strip()
+            for line in env_t.splitlines()
+            if line.strip() and not line.startswith("#") and "=" in line
         }
         ex_keys = {
-            l.split("=")[0].strip()
-            for l in t.splitlines()
-            if l.strip() and not l.startswith("#") and "=" in l
+            line.split("=")[0].strip()
+            for line in t.splitlines()
+            if line.strip() and not line.startswith("#") and "=" in line
         }
         missing = env_keys - ex_keys
         if missing:
@@ -319,9 +319,9 @@ def check_gitignore() -> None:
     # .env.docker must NOT be caught by any pattern
     # Patterns that could catch it: .env (exact), *.env (suffix), .env.*.local (suffix+local)
     dangerous = [
-        l
-        for l in active
-        if l in (".env", "*.env") or (l.startswith(".env.") and l.endswith(".local"))
+        line
+        for line in active
+        if line in (".env", "*.env") or (line.startswith(".env.") and line.endswith(".local"))
     ]
     # .env.docker: doesn't end in .env, isn't exactly .env, isn't .env.*.local → safe
     ok(
@@ -363,7 +363,7 @@ def check_makefile() -> None:
 
     checks = {
         # Cross-platform PYTHON detection (replaced 'py -3.11' hardcode)
-        "python -c \"import sys; print(sys.executable)\"": "PYTHON uses cross-platform dynamic detection",
+        'python -c "import sys; print(sys.executable)"': "PYTHON uses cross-platform dynamic detection",
         # GPU safety: API_WORKERS defaults to 1 (was hardcoded 4 → VRAM OOM)
         "API_WORKERS              ?= 1": "API_WORKERS default 1 (GPU safe — was 4)",
         # docker compose subcommand form (not deprecated docker-compose binary)
@@ -386,9 +386,9 @@ def check_makefile() -> None:
 
     # --extra-index-url must not appear in the install-gpu recipe (comments excluded)
     lines = [
-        l.split("#")[0]
-        for l in t.splitlines()
-        if "extra-index-url" in l.split("#")[0] and "torch" in l.split("#")[0]
+        line.split("#")[0]
+        for line in t.splitlines()
+        if "extra-index-url" in line.split("#")[0] and "torch" in line.split("#")[0]
     ]
     if lines:
         fail(
@@ -402,7 +402,7 @@ def check_makefile() -> None:
     # WIP markers
     wip = t.count("[WIP]")
     if wip >= 11:
-        ok(f, f"WIP markers on unimplemented targets", f"{wip} found")
+        ok(f, "WIP markers on unimplemented targets", f"{wip} found")
     else:
         warn(f, "WIP markers", f"only {wip} found, expected >= 11")
 
@@ -415,7 +415,9 @@ def check_precommit() -> None:
         return
 
     for removed in ["id: black", "id: isort", "id: autoflake"]:
-        active = [l for l in t.splitlines() if removed in l and not l.strip().startswith("#")]
+        active = [
+            line for line in t.splitlines() if removed in line and not line.strip().startswith("#")
+        ]
         if active:
             fail(f, f"{removed} removed", "still active")
         else:
@@ -426,13 +428,13 @@ def check_precommit() -> None:
     else:
         fail(f, "ruff hook present", "missing")
 
-    dep_lines = [l.strip() for l in t.splitlines() if l.strip().startswith("- mdformat")]
-    if any("mdformat-ruff" in l for l in dep_lines):
+    dep_lines = [line.strip() for line in t.splitlines() if line.strip().startswith("- mdformat")]
+    if any("mdformat-ruff" in line for line in dep_lines):
         ok(f, "mdformat-ruff pairing")
     else:
         fail(f, "mdformat-ruff pairing", "check mdformat additional_dependencies")
 
-    if any("mdformat-black" in l.split("#")[0] for l in dep_lines):
+    if any("mdformat-black" in line.split("#")[0] for line in dep_lines):
         fail(f, "mdformat-black removed", "conflicts with ruff formatter")
     else:
         ok(f, "mdformat-black removed")
@@ -455,7 +457,7 @@ def check_git() -> None:
         return
 
     lines = result.stdout.splitlines()
-    status = {l[3:]: l[:2].strip() for l in lines if l.strip()}
+    status = {line[3:]: line[:2].strip() for line in lines if line.strip()}
 
     # Files that must NOT be untracked (should be committed)
     should_be_tracked = [".dockerignore", ".env.docker"]
@@ -494,7 +496,9 @@ def check_git() -> None:
     #               "??" = untracked/ignored (good)
     #               ""  = not present in working tree (good)
     bak_staged_del = [p for p, s in status.items() if ".bak_next_level" in p and s == "D"]
-    bak_active     = [p for p, s in status.items() if ".bak_next_level" in p and s not in ("??", "", "D")]
+    bak_active = [
+        p for p, s in status.items() if ".bak_next_level" in p and s not in ("??", "", "D")
+    ]
     if bak_active:
         fail(f, "*.bak_next_level untracked", f"still tracked: {bak_active}")
     elif bak_staged_del:
@@ -527,7 +531,7 @@ def check_environment() -> None:
     # Python version
     v = sys.version_info
     if v >= (3, 11):
-        ok(f, f"Python >= 3.11", f"{v.major}.{v.minor}.{v.micro}")
+        ok(f, "Python >= 3.11", f"{v.major}.{v.minor}.{v.micro}")
     else:
         fail(f, "Python >= 3.11", f"found {v.major}.{v.minor}")
 
@@ -596,22 +600,22 @@ def check_config_yaml() -> None:
 
     # ── Feature validation bounds (M-04, F-08) ────────────────────────────────
     for needle, desc in [
-        ("age_min: 18.0",   "age_min: 18.0 (M-04 fix — was 0.0)"),
+        ("age_min: 18.0", "age_min: 18.0"),
         ("children_min: 0", "children_min: 0 (F-08)"),
-        ("children_max: 20","children_max: 20 (F-08)"),
+        ("children_max: 20", "children_max: 20 (F-08)"),
     ]:
         if needle in t:
             ok(f, desc)
         else:
             fail(f, desc, f"pattern not found: {needle!r}")
 
-    # ── Collinearity / VIF (G6 fix) ───────────────────────────────────────────
+    # ── Collinearity / VIF  ───────────────────────────────────────────
     if "vif_threshold: 10.0" in t:
         ok(f, "vif_threshold: 10.0 (G6 fix — was 5.0)")
     else:
         fail(f, "vif_threshold: 10.0", "High+ segment R²=-29.83 root cause — must not be 5.0")
 
-    # ── Sample weights monotonicity (M5 fix) ─────────────────────────────────
+    # ── Sample weights monotonicity ─────────────────────────────────
     if "above_q99: 2.00" in t:
         ok(f, "above_q99: 2.00 (M5 monotonicity fix — was 1.50)")
     else:
@@ -619,20 +623,26 @@ def check_config_yaml() -> None:
 
     # ── Hybrid predictor key values ───────────────────────────────────────────
     for needle, desc in [
-        ("max_actuarial_uplift_ratio: 1.15", "max_actuarial_uplift_ratio: 1.15 (C-01 fix — was 1.45)"),
-        ("min_actuarial_floor_ratio: 0.75",  "min_actuarial_floor_ratio: 0.75 (T2-B ML-relative floor)"),
-        ("threshold: 9500.0",                "hybrid threshold: 9500.0"),
-        ("blend_ratio: 0.70",                "blend_ratio: 0.70"),
+        (
+            "max_actuarial_uplift_ratio: 1.15",
+            "max_actuarial_uplift_ratio: 1.15 (C-01 fix — was 1.45)",
+        ),
+        (
+            "min_actuarial_floor_ratio: 0.75",
+            "min_actuarial_floor_ratio: 0.75 (T2-B ML-relative floor)",
+        ),
+        ("threshold: 9500.0", "hybrid threshold: 9500.0"),
+        ("blend_ratio: 0.70", "blend_ratio: 0.70"),
     ]:
         if needle in t:
             ok(f, desc)
         else:
             fail(f, desc, f"pattern not found: {needle!r}")
 
-    # ── Calibration factors (BUG-5 / G7 fix) ─────────────────────────────────
+    # ── Calibration factors ─────────────────────────────────
     for needle, desc in [
         ("pricing_factor: 1.00", "pricing_factor: 1.00 (reg:squarederror — no uplift needed)"),
-        ("risk_factor: 0.97",    "risk_factor: 0.97 (quantile alpha=0.65 nudge)"),
+        ("risk_factor: 0.97", "risk_factor: 0.97 (quantile alpha=0.65 nudge)"),
     ]:
         if needle in t:
             ok(f, desc)
@@ -649,7 +659,7 @@ def check_config_yaml() -> None:
         else:
             fail(f, desc, f"pattern not found: {needle!r}")
 
-    # ── XGBoost quantile alpha (G7 / YJ nonlinearity fix) ────────────────────
+    # ── XGBoost quantile alpha  ────────────────────
     if "quantile_alpha: 0.30" in t:
         ok(f, "quantile_alpha: 0.30 (YJ nonlinearity fix — was 0.57)")
     else:
@@ -661,7 +671,7 @@ def check_config_yaml() -> None:
     else:
         fail(f, "risk_model_alpha: 0.30", "must match models.xgboost.quantile_alpha")
 
-    # ── Optuna budget (M-03 / TPE activation fix) ────────────────────────────
+    # ── Optuna budget ( TPE activation fix) ────────────────────────────
     if "n_trials: 50" in t:
         ok(f, "optuna n_trials: 50 (M-03 fix — was 1)")
     else:
@@ -674,31 +684,37 @@ def check_config_yaml() -> None:
         val = m_nt.group(1) if m_nt else "not found"
         fail(f, "sampler n_startup_trials: 10", f"found: {val} — must be < n_trials")
 
-    # ── Evaluation primary metric (M6 fix) ────────────────────────────────────
+    # ── Evaluation primary metric ────────────────────────────────────
     # Must appear in BOTH evaluation.metrics and hybrid_predictor.evaluation
     count = t.count("primary_metric: net_profit")
     if count >= 2:
         ok(f, "primary_metric: net_profit (both locations — M6 fix, was smape)")
     elif count == 1:
-        warn(f, "primary_metric: net_profit", "found in only 1 location — check both evaluation sections")
+        warn(
+            f,
+            "primary_metric: net_profit",
+            "found in only 1 location — check both evaluation sections",
+        )
     else:
         fail(f, "primary_metric: net_profit", "was 'smape' — contradicts operator notes")
 
     # ── Training split (CI-width fix) ─────────────────────────────────────────
     for needle, desc in [
         ("test_size: 0.15", "test_size: 0.15 (CI-width fix — was 0.20)"),
-        ("val_size: 0.30",  "val_size: 0.30  (CI-width fix — was 0.25)"),
+        ("val_size: 0.30", "val_size: 0.30  (CI-width fix — was 0.25)"),
     ]:
         if needle in t:
             ok(f, desc)
         else:
             fail(f, desc, f"pattern not found: {needle!r}")
 
-    # ── Deployment gate G7 (BUG-6 fix) ───────────────────────────────────────
+    # ── Deployment gate G7 ───────────────────────────────────────
     if "g7_max_overpricing_rate: 0.62" in t:
         ok(f, "g7_max_overpricing_rate: 0.62 (BUG-6 fix — was 0.55)")
     else:
-        fail(f, "g7_max_overpricing_rate: 0.62", "0.55 is structurally unreachable for squarederror")
+        fail(
+            f, "g7_max_overpricing_rate: 0.62", "0.55 is structurally unreachable for squarederror"
+        )
 
     # ── Conformal calibration split (CI-width fix) ────────────────────────────
     if "calibration_split_ratio: 0.20" in t:
@@ -715,10 +731,18 @@ def check_config_yaml() -> None:
     # ── GPU xgboost_median device key (v7.5.2) ────────────────────────────────
     # Check that 'xgboost_median:' section under 'gpu:' contains 'device: cuda:0'
     _gpu_block_m = re.search(r"gpu:.*?(?=\n\w)", t, re.DOTALL)
-    if _gpu_block_m and "xgboost_median:" in _gpu_block_m.group() and "device: cuda:0" in _gpu_block_m.group():
+    if (
+        _gpu_block_m
+        and "xgboost_median:" in _gpu_block_m.group()
+        and "device: cuda:0" in _gpu_block_m.group()
+    ):
         ok(f, "gpu.xgboost_median.device: cuda:0 (v7.5.2 — missing caused ~250 log msgs/run)")
     else:
-        fail(f, "gpu.xgboost_median.device: cuda:0", "key absent — XGBoost will emit redundant device warnings")
+        fail(
+            f,
+            "gpu.xgboost_median.device: cuda:0",
+            "key absent — XGBoost will emit redundant device warnings",
+        )
 
     # ── Batch cap config-driven (T3-C) ────────────────────────────────────────
     if "max_batch_size: 10000" in t:
@@ -728,8 +752,11 @@ def check_config_yaml() -> None:
 
     # ── Drift detection dual-key (config compat fix) ──────────────────────────
     for needle, desc in [
-        ("drift_detection: true",         "monitoring.drift_detection: true (canonical key)"),
-        ("drift_detection_enabled: true", "monitoring.drift_detection_enabled: true (legacy alias)"),
+        ("drift_detection: true", "monitoring.drift_detection: true (canonical key)"),
+        (
+            "drift_detection_enabled: true",
+            "monitoring.drift_detection_enabled: true (legacy alias)",
+        ),
     ]:
         if needle in t:
             ok(f, desc)
@@ -740,7 +767,9 @@ def check_config_yaml() -> None:
     if "threshold: 0.01" in t:
         ok(f, "smape.threshold: 0.01 (was 1e-10 — caused SMAPE blow-up near zero)")
     else:
-        fail(f, "smape.threshold: 0.01", "1e-10 denominator floor causes near-zero SMAPE instability")
+        fail(
+            f, "smape.threshold: 0.01", "1e-10 denominator floor causes near-zero SMAPE instability"
+        )
 
     # ── max_cached_hist_node (v7.4.5 right-sizing) ───────────────────────────
     if "max_cached_hist_node: 1024" in t:
@@ -751,7 +780,7 @@ def check_config_yaml() -> None:
     # ── Asymmetric penalties consistency ─────────────────────────────────────
     # underpricing_multiplier must match business_config.underpricing_penalty_multiplier
     biz = re.search(r"underpricing_penalty_multiplier:\s*([\d.]+)", t)
-    ev  = re.search(r"underpricing_multiplier:\s*([\d.]+)", t)
+    ev = re.search(r"underpricing_multiplier:\s*([\d.]+)", t)
     if biz and ev:
         if biz.group(1) == ev.group(1):
             ok(f, f"underpricing multiplier consistent ({biz.group(1)} in both locations)")
@@ -774,6 +803,7 @@ def check_pipeline_metadata() -> None:
 
     try:
         import json
+
         meta = json.loads(raw)
     except Exception as e:
         fail(f, "valid JSON", str(e))
@@ -781,10 +811,10 @@ def check_pipeline_metadata() -> None:
 
     # Version / schema
     ver = meta.get("version", "")
-    if ver == "5.2.0-fix4":
-        ok(f, "version: 5.2.0-fix4")
+    if ver == "5.2.0":
+        ok(f, "version: 5.2.0")
     else:
-        fail(f, "version: 5.2.0-fix4", f"found: {ver!r}")
+        fail(f, "version: 5.2.0", f"found: {ver!r}")
 
     schema = meta.get("model_schema_version", "")
     if schema == "3.0":
@@ -836,7 +866,11 @@ def check_pipeline_metadata() -> None:
             else:
                 fail(f, f"bias_correction_thresholds.{key}", "missing key")
     else:
-        fail(f, "bias_correction_thresholds block present", "absent — post-training metadata incomplete")
+        fail(
+            f,
+            "bias_correction_thresholds block present",
+            "absent — post-training metadata incomplete",
+        )
 
     # MLflow run ID
     run_id = meta.get("mlflow_run_id", "")
@@ -853,7 +887,7 @@ def check_predict_py() -> None:
     if t is None:
         return
 
-    # Version strings (T3-B fix — was frozen at 6.3.1)
+    # Version strings
     for cls in ["PredictionPipeline", "HybridPredictor"]:
         # Locate the class block and check VERSION within it
         pattern = rf'class {cls}.*?VERSION\s*=\s*"([^"]+)"'
@@ -865,11 +899,15 @@ def check_predict_py() -> None:
         else:
             fail(f, f"{cls}.VERSION present", "class VERSION not found")
 
-    # BUG-5 fix: pricing_factor/risk_factor read from config (not single 'factor')
+    # pricing_factor/risk_factor read from config (not single 'factor')
     if "pricing_factor" in t and "risk_factor" in t:
         ok(f, "BUG-5: pricing_factor + risk_factor read (per-model calibration)")
     else:
-        fail(f, "BUG-5: pricing_factor + risk_factor", "still using single 'factor' key — calibration broken for both models")
+        fail(
+            f,
+            "BUG-5: pricing_factor + risk_factor",
+            "still using single 'factor' key — calibration broken for both models",
+        )
 
     # T3-C: max batch size config-driven
     if 'prediction", {}).get("max_batch_size"' in t or "max_batch_size" in t:
@@ -881,7 +919,11 @@ def check_predict_py() -> None:
     if "min_actuarial_floor_ratio" in t:
         ok(f, "T2-B: min_actuarial_floor_ratio ML-relative floor guard present")
     else:
-        fail(f, "T2-B: min_actuarial_floor_ratio", "ML-relative floor guard missing from _blend_predictions")
+        fail(
+            f,
+            "T2-B: min_actuarial_floor_ratio",
+            "ML-relative floor guard missing from _blend_predictions",
+        )
 
     # M-04: age_min read from features config (not hardcoded 0.0)
     if '_feat.get("age_min"' in t or "_feat.get('age_min'" in t:
@@ -890,17 +932,21 @@ def check_predict_py() -> None:
         fail(f, "M-04: age_min config-driven", "age floor must come from config, not hardcoded")
 
     # F-08: children bounds read from features config
-    if 'children_min' in t and 'children_max' in t:
+    if "children_min" in t and "children_max" in t:
         ok(f, "F-08: children_min/children_max read from features config")
     else:
         fail(f, "F-08: children bounds config-driven", "children validation bounds missing")
 
-    # C-01 fix: max_actuarial_uplift_ratio default is 1.15 (not 1.45)
+    # max_actuarial_uplift_ratio default is 1.15 (not 1.45)
     m_uplift = re.search(r'get\("max_actuarial_uplift_ratio",\s*([\d.]+)\)', t)
     if m_uplift and float(m_uplift.group(1)) == 1.15:
         ok(f, "C-01: max_actuarial_uplift_ratio default 1.15 (was 1.45)")
     elif m_uplift:
-        fail(f, "C-01: max_actuarial_uplift_ratio default 1.15", f"found default: {m_uplift.group(1)}")
+        fail(
+            f,
+            "C-01: max_actuarial_uplift_ratio default 1.15",
+            f"found default: {m_uplift.group(1)}",
+        )
     else:
         warn(f, "max_actuarial_uplift_ratio default", "could not verify default value")
 
@@ -916,25 +962,41 @@ def check_evaluate_py() -> None:
     if "def check_ci_coverage(" in t:
         ok(f, "T2-C: check_ci_coverage() function present (was absent entirely)")
     else:
-        fail(f, "T2-C: check_ci_coverage()", "function missing — CI coverage never verified on test set")
+        fail(
+            f,
+            "T2-C: check_ci_coverage()",
+            "function missing — CI coverage never verified on test set",
+        )
 
     # T2-D: statistical test on net_profit, not MAE
     # Implementation uses stats.ttest_rel (scipy paired t-test) on ml_profits vs hybrid_profits.
     if "ttest_rel" in t and "net_profit" in t:
         ok(f, "T2-D: statistical test on per-policy net_profit (stats.ttest_rel)")
     else:
-        fail(f, "T2-D: net_profit paired test", "test may still compare |MAE| — hybrid can game significance by cutting error while hurting profit")
+        fail(
+            f,
+            "T2-D: net_profit paired test",
+            "test may still compare |MAE| — hybrid can game significance by cutting error while hurting profit",
+        )
 
     # T2-E: win_tail_risk replaces win_smape
     if "win_tail_risk" in t:
         ok(f, "T2-E: win_tail_risk metric present (replaced win_smape)")
     else:
-        fail(f, "T2-E: win_tail_risk", "win_smape is academic; tail risk is the correct deployment gate")
+        fail(
+            f,
+            "T2-E: win_tail_risk",
+            "win_smape is academic; tail risk is the correct deployment gate",
+        )
     if "win_smape" in t:
         # Check it's only used as legacy/secondary, not in the wins sum
         wins_line = re.search(r"wins\s*=\s*sum\(\[([^\]]+)\]\)", t)
         if wins_line and "win_smape" in wins_line.group(1):
-            fail(f, "T2-E: win_smape removed from wins sum", "win_smape still contributes to deployment gate")
+            fail(
+                f,
+                "T2-E: win_smape removed from wins sum",
+                "win_smape still contributes to deployment gate",
+            )
         else:
             ok(f, "T2-E: win_smape retained as secondary diagnostic only")
 
@@ -942,19 +1004,27 @@ def check_evaluate_py() -> None:
     if "loading * premium_charged" in t or "loading * y_pred" in t or "loading * yp" in t:
         ok(f, "T3-A: revenue model uses actuarial loading formula")
     else:
-        fail(f, "T3-A: actuarial revenue model", "old revenue*1.03 compound masked sub-3% underpricing")
+        fail(
+            f,
+            "T3-A: actuarial revenue model",
+            "old revenue*1.03 compound masked sub-3% underpricing",
+        )
 
     # R² sentinel: empty segments must return NaN, not 0.0
     if 'float("nan")' in t and ("len(seg_true)" in t or "len(y_true)" in t):
-        ok(f, 'Finding G: empty-segment R² returns NaN (not 0.0)')
+        ok(f, "Finding G: empty-segment R² returns NaN (not 0.0)")
     else:
-        fail(f, 'Finding G: R² NaN sentinel', 'empty segment R²=0.0 silently passes R²<0 guards')
+        fail(f, "Finding G: R² NaN sentinel", "empty segment R²=0.0 silently passes R²<0 guards")
 
     # XGBoost DMatrix warning suppressed (log flood fix)
     if "Falling back to prediction using DMatrix" in t:
         ok(f, "XGBoost DMatrix device-mismatch warning suppressed")
     else:
-        warn(f, "XGBoost DMatrix warning filter", "warning filter may be missing — check for log flooding")
+        warn(
+            f,
+            "XGBoost DMatrix warning filter",
+            "warning filter may be missing — check for log flooding",
+        )
 
 
 # ── render results ────────────────────────────────────────────────────────────

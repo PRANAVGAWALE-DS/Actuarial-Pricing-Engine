@@ -16,9 +16,8 @@ import os
 import sys
 import threading
 import time
-import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
 from io import BytesIO
 from typing import Any
@@ -51,6 +50,7 @@ except ImportError:
 
 _root_logger = logging.getLogger()
 if not _root_logger.hasHandlers():
+
     class UTF8SafeStreamHandler(logging.StreamHandler):
         def emit(self, record):
             try:
@@ -60,18 +60,14 @@ if not _root_logger.hasHandlers():
                 try:
                     stream.write(msg + terminator)
                 except UnicodeEncodeError:
-                    safe_msg = msg.encode("ascii", errors="backslashreplace").decode(
-                        "ascii"
-                    )
+                    safe_msg = msg.encode("ascii", errors="backslashreplace").decode("ascii")
                     stream.write(safe_msg + terminator)
                 stream.flush()
             except Exception:
                 self.handleError(record)
 
     _handler = UTF8SafeStreamHandler(sys.stdout)
-    _handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    )
+    _handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     _root_logger.addHandler(_handler)
     _root_logger.setLevel(logging.INFO)
 
@@ -175,7 +171,7 @@ def _sanitize_api_key(raw: str | None) -> str | None:
             f"Using stripped value ({len(key)} chars). "
             "If your key genuinely contains spaces, this is expected. "
             "Otherwise check your .env file for inline comments: "
-            "API_KEY=\"your-key\"  # comment"
+            'API_KEY="your-key"  # comment'
         )
 
     try:
@@ -240,16 +236,16 @@ MAX_BATCH_CSV_BYTES = 5 * 1024 * 1024  # 5 MB
 
 # Base template — static values only.  Theme-sensitive keys (font.color,
 # hoverlabel) are injected at render time by _chart_layout().
-# BUG-3 FIX: added default margin so axis labels and vline annotations are
+# added default margin so axis labels and vline annotations are
 # never clipped.  margin.t=60 gives heading room; margin.b=70 prevents the
 # x-axis label from being cut off; margin.r=20 avoids legend truncation.
 CHART_LAYOUT_TEMPLATE = {
     "plot_bgcolor": "rgba(0,0,0,0)",
     "paper_bgcolor": "rgba(0,0,0,0)",
-    "font": dict(family="Arial, sans-serif", size=12),
+    "font": {"family": "Arial, sans-serif", "size": 12},
     "title_font_size": 18,
     "hovermode": "x unified",
-    "margin": dict(t=60, b=70, l=60, r=20),
+    "margin": {"t": 60, "b": 70, "l": 60, "r": 20},
 }
 
 CHART_AXIS_CONFIG = {
@@ -262,6 +258,7 @@ CHART_AXIS_CONFIG = {
 # ---------------------------------------------------------------------------
 # THEME-4 / THEME-5: Runtime theme helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_theme() -> str:
     """Best-effort active-theme detection from Python.
@@ -277,39 +274,17 @@ def _get_theme() -> str:
 
 
 def _chart_layout(**extra: Any) -> dict:
-    """Return a Plotly layout dict merging CHART_LAYOUT_TEMPLATE.
-
-    THEME-4 FIX: hoverlabel bgcolor was hardcoded "white" — tooltip rendered
-    as a white box on dark chart backgrounds.  Replaced with a dark semi-
-    transparent rgba value that reads correctly on both light and dark themes
-    without requiring Python-side theme detection.
-
-    SHALLOW-MERGE FIX (Point 4): ``dict(CHART_LAYOUT_TEMPLATE)`` produces a
-    shallow copy, so ``extra=dict(font=dict(size=14))`` previously wiped the
-    entire base ``font`` dict (losing ``family="Arial, sans-serif"``).
-    The layout is now deep-copied and nested ``extra`` dicts are recursively
-    merged rather than replaced wholesale.
-
-    DARK-MODE FIX (v3.5.11): font.color was hardcoded to the light-palette
-    value "#2d3748" regardless of the dark_mode toggle, making axis labels,
-    titles, and annotations invisible on the dark (#0e1117) app background.
-    Now reads st.session_state.dark_mode and switches font colour accordingly.
-
-    Args:
-        **extra: Additional layout kwargs merged over the base template.
-                 Nested dicts (e.g. ``font=dict(size=14)``) are merged
-                 key-by-key, not replaced.
-    """
+    """Return a Plotly layout dict merging CHART_LAYOUT_TEMPLATE."""
     is_dark: bool = st.session_state.get("dark_mode", False)
     layout: dict[str, Any] = copy.deepcopy(CHART_LAYOUT_TEMPLATE)
-    # DARK-MODE FIX: choose font colour based on active palette.
+    # DARK-MODE : choose font colour based on active palette.
     layout["font"]["color"] = "#e2e8f0" if is_dark else "#2d3748"
-    layout["hoverlabel"] = dict(
-        bgcolor="rgba(30, 33, 48, 0.92)",
-        font_size=13,
-        font_color="#f0f0f5",
-        bordercolor="rgba(255, 255, 255, 0.12)",
-    )
+    layout["hoverlabel"] = {
+        "bgcolor": "rgba(30, 33, 48, 0.92)",
+        "font_size": 13,
+        "font_color": "#f0f0f5",
+        "bordercolor": "rgba(255, 255, 255, 0.12)",
+    }
     for key, val in extra.items():
         if key in layout and isinstance(layout[key], dict) and isinstance(val, dict):
             # Deep-merge: overlay caller keys onto the existing nested dict
@@ -505,9 +480,9 @@ class Prediction:
         prediction: float,
         model_used: str,
         timestamp: datetime | None = None,
-    ) -> "Prediction":
+    ) -> Prediction:
         if timestamp is None:
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now(UTC)
         return cls(
             age=form_data.age,
             sex=form_data.sex,
@@ -590,20 +565,16 @@ class CircuitBreaker:
                     and time.monotonic() - self._last_failure_mono > self.timeout
                 ):
                     # This thread wins the probe slot; all others keep seeing
-                    # "half_open" and are rejected below (thundering-herd fix).
+                    # "half_open" and are rejected below (thundering-herd).
                     self.state = "half_open"
                     current_state = "half_open"
                 else:
-                    raise ConnectionError(
-                        "Service temporarily unavailable (circuit breaker open)"
-                    )
+                    raise ConnectionError("Service temporarily unavailable (circuit breaker open)")
             elif current_state == "half_open":
                 # A probe is already in flight from the thread that transitioned
                 # open→half_open.  Reject all other threads to prevent a burst
                 # of concurrent probe requests hitting the recovering backend.
-                raise ConnectionError(
-                    "Service temporarily unavailable (circuit breaker probing)"
-                )
+                raise ConnectionError("Service temporarily unavailable (circuit breaker probing)")
 
         try:
             result = func(*args, **kwargs)
@@ -639,9 +610,7 @@ class CircuitBreaker:
 
             if self.failure_count >= self.failure_threshold:
                 self.state = "open"
-                logger.warning(
-                    f"Circuit breaker opened after {self.failure_count} failures"
-                )
+                logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
 
     def reset(self) -> None:
         """Atomically reset breaker to closed state (admin use only)."""
@@ -786,9 +755,7 @@ class APIClient:
 
     def health_check(self) -> dict[str, Any]:
         try:
-            resp = self.session.get(
-                f"{self.base_url}/health", timeout=self.health_timeout
-            )
+            resp = self.session.get(f"{self.base_url}/health", timeout=self.health_timeout)
             # Parse the body first so non-2xx responses still surface the
             # backend's detail payload rather than losing it to raise_for_status.
             body = self._safe_json(resp)
@@ -817,9 +784,7 @@ class APIClient:
                 timeout=self.timeout,
             )
             if resp.status_code == 429:
-                raise RateLimitError(
-                    "API rate limit reached (429). Wait a moment and retry."
-                )
+                raise RateLimitError("API rate limit reached (429). Wait a moment and retry.")
             # Read body before raise_for_status so the backend's detailed
             # validation message is preserved rather than discarded.
             body = self._safe_json(resp)
@@ -835,14 +800,14 @@ class APIClient:
             return self.circuit_breaker.call(_make_request)
         except RateLimitError:
             raise
-        except requests.exceptions.Timeout:
-            raise TimeoutError("Request timed out")
+        except requests.exceptions.Timeout as exc:
+            raise TimeoutError("Request timed out") from exc
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 400:
-                raise ValueError("Invalid request data")
+                raise ValueError("Invalid request data") from e
             if status == 503:
-                raise ConnectionError("Service unavailable")
+                raise ConnectionError("Service unavailable") from e
             raise
         except requests.exceptions.RequestException as e:
             raise ConnectionError("Failed to connect to service") from e
@@ -858,10 +823,12 @@ class APIClient:
             # block.  The caller (display_batch_predictions) is responsible for
             # chunking at BATCH_PROCESS_SIZE before calling this method.
             raw_timeout = len(records) * 0.05 + 10
-            bounded_timeout = int(min(
-                max(self.timeout, raw_timeout),
-                MAX_BATCH_TIME_SECONDS,
-            ))
+            bounded_timeout = int(
+                min(
+                    max(self.timeout, raw_timeout),
+                    MAX_BATCH_TIME_SECONDS,
+                )
+            )
 
             resp = self.session.post(
                 f"{self.base_url}/api/v1/predict/batch",
@@ -889,14 +856,14 @@ class APIClient:
             return self.circuit_breaker.call(_make_request)
         except RateLimitError:
             raise
-        except requests.exceptions.Timeout:
-            raise TimeoutError("Batch request timed out")
+        except requests.exceptions.Timeout as exc:
+            raise TimeoutError("Batch request timed out") from exc
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 400:
-                raise ValueError("Invalid batch request data")
+                raise ValueError("Invalid batch request data") from e
             if status == 503:
-                raise ConnectionError("Service unavailable")
+                raise ConnectionError("Service unavailable") from e
             raise
         except requests.exceptions.RequestException as e:
             raise ConnectionError("Failed to connect to service") from e
@@ -925,7 +892,7 @@ class APIClient:
             self.session.close()
         except Exception as e:
             logger.error(f"Session cleanup failed: {e}", exc_info=True)
-            if isinstance(e, (RuntimeError, OSError)):
+            if isinstance(e, RuntimeError | OSError):
                 raise
 
 
@@ -934,7 +901,7 @@ class APIClient:
 # them on process exit.  This prevents the atexit accumulation problem (Issue 7)
 # where each cache-clear + re-create cycle appended a new atexit entry, keeping
 # the old client's connection pool alive indefinitely via the atexit reference.
-_managed_api_clients: list["APIClient"] = []
+_managed_api_clients: list[APIClient] = []
 
 
 def _close_all_managed_clients() -> None:
@@ -997,9 +964,7 @@ def get_api_client() -> APIClient:
 
 
 @st.cache_data(ttl=HEALTH_CHECK_TTL, show_spinner=False)
-def check_api_health_cached() -> (
-    tuple[bool, str | None, str | None, str | None, str | None]
-):
+def check_api_health_cached() -> tuple[bool, str | None, str | None, str | None, str | None]:
     """Check API health with caching."""
     try:
         client = get_api_client()
@@ -1033,8 +998,8 @@ def _cross_check_schema(health_data: dict[str, Any]) -> None:
         api_values = health_data.get(api_key)
         if api_values is None:
             continue
-        api_set = set(str(v).strip().lower() for v in api_values)
-        local_set = set(str(v).strip().lower() for v in local_values)
+        api_set = {str(v).strip().lower() for v in api_values}
+        local_set = {str(v).strip().lower() for v in local_values}
         if api_set != local_set:
             logger.warning(
                 f"Schema mismatch for {const_name}: "
@@ -1068,15 +1033,11 @@ def display_api_status() -> bool:
         # cached health check which will surface the configuration error.
         pass
 
-    is_healthy, model_name, error_msg, pipeline_version, hybrid_version = (
-        check_api_health_cached()
-    )
+    is_healthy, model_name, error_msg, pipeline_version, hybrid_version = check_api_health_cached()
 
     if is_healthy:
         safe_model = safe_html(model_name or "unknown")
-        version_str = (
-            f" | Pipeline v{safe_html(pipeline_version)}" if pipeline_version else ""
-        )
+        version_str = f" | Pipeline v{safe_html(pipeline_version)}" if pipeline_version else ""
         st.success(f"✅ API Connected | Model: **{safe_model}**{version_str}")
     else:
         col1, col2 = st.columns([4, 1])
@@ -1109,8 +1070,17 @@ def check_csv_injection(df: pd.DataFrame) -> bool:
     """Enhanced CSV injection detection."""
     dangerous_starts = ("=", "+", "-", "@", "\t", "\r", "\n", "|", "#", "%", "~", "^")
     dangerous_patterns = [
-        "cmd|", "powershell", "system(", "exec(", "eval(",
-        "@sum", "@if", "@cmd", "dde", "|calc", "|cmd",
+        "cmd|",
+        "powershell",
+        "system(",
+        "exec(",
+        "eval(",
+        "@sum",
+        "@if",
+        "@cmd",
+        "dde",
+        "|calc",
+        "|cmd",
     ]
 
     for col in df.columns:
@@ -1161,9 +1131,7 @@ def rate_limit_check(namespace: str = "default") -> bool:
     return True
 
 
-def validate_bmi_calculation(
-    height: float, weight: float
-) -> tuple[bool, str | None, float | None]:
+def validate_bmi_calculation(height: float, weight: float) -> tuple[bool, str | None, float | None]:
     try:
         height_val = float(height)
         weight_val = float(weight)
@@ -1248,6 +1216,7 @@ def get_risk_level(score: int) -> str:
 
 def safe_display(func):
     """Decorator for safe display function execution."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -1302,21 +1271,36 @@ def init_session_state() -> None:
 def _is_valid_prediction(item: Any) -> bool:
     try:
         required_attrs = [
-            "age", "sex", "bmi", "children", "smoker", "region",
-            "prediction", "model_used", "timestamp",
+            "age",
+            "sex",
+            "bmi",
+            "children",
+            "smoker",
+            "region",
+            "prediction",
+            "model_used",
+            "timestamp",
         ]
         for attr in required_attrs:
             if not hasattr(item, attr):
                 return False
 
-        if not isinstance(item.age, int): return False
-        if not isinstance(item.sex, str): return False
-        if not isinstance(item.bmi, (int, float)): return False
-        if not isinstance(item.children, int): return False
-        if not isinstance(item.smoker, str): return False
-        if not isinstance(item.region, str): return False
-        if not isinstance(item.prediction, (int, float)): return False
-        if not isinstance(item.model_used, str): return False
+        if not isinstance(item.age, int):
+            return False
+        if not isinstance(item.sex, str):
+            return False
+        if not isinstance(item.bmi, int | float):
+            return False
+        if not isinstance(item.children, int):
+            return False
+        if not isinstance(item.smoker, str):
+            return False
+        if not isinstance(item.region, str):
+            return False
+        if not isinstance(item.prediction, int | float):
+            return False
+        if not isinstance(item.model_used, str):
+            return False
 
         return True
     except (AttributeError, TypeError):
@@ -1362,9 +1346,7 @@ def get_history_dataframe(history: list) -> pd.DataFrame:
 # =============================================================================
 
 
-def calculate_prediction(
-    form_data: FormData, silent: bool = False
-) -> tuple[float, str] | None:
+def calculate_prediction(form_data: FormData, silent: bool = False) -> tuple[float, str] | None:
     """Calculate insurance premium prediction."""
     try:
         client = get_api_client()
@@ -1434,15 +1416,11 @@ def calculate_prediction(
     return None
 
 
-def add_prediction_to_history(
-    form_data: FormData, prediction: float, model_used: str
-) -> None:
+def add_prediction_to_history(form_data: FormData, prediction: float, model_used: str) -> None:
     """Add prediction to history with automatic trimming."""
     try:
         pred = Prediction.from_form_data(form_data, prediction, model_used)
-        logger.info(
-            f"Created Prediction: age={pred.age}, premium=${pred.prediction:,.2f}"
-        )
+        logger.info(f"Created Prediction: age={pred.age}, premium=${pred.prediction:,.2f}")
 
         new_history = st.session_state.predictions_history.copy()
         if len(new_history) >= MAX_HISTORY_SIZE:
@@ -1462,9 +1440,7 @@ def add_prediction_to_history(
 # =============================================================================
 
 
-def process_batch_row_safe(
-    row_dict: dict[str, Any], client: APIClient
-) -> dict[str, Any]:
+def process_batch_row_safe(row_dict: dict[str, Any], client: APIClient) -> dict[str, Any]:
     """Safely process a single batch row with comprehensive validation."""
     try:
         required_keys = ["age", "sex", "bmi", "children", "smoker", "region"]
@@ -1489,12 +1465,10 @@ def process_batch_row_safe(
         }
         imputed = []
         converted: dict[str, Any] = {}
-        for field, (default, _, converter) in FIELD_DEFAULTS.items():
+        for field, (_default, _, converter) in FIELD_DEFAULTS.items():
             raw = row_dict.get(field)
             is_missing = (
-                raw is None
-                or (isinstance(raw, float) and pd.isna(raw))
-                or str(raw).strip() == ""
+                raw is None or (isinstance(raw, float) and pd.isna(raw)) or str(raw).strip() == ""
             )
             converted[field] = converter(raw)
             if is_missing:
@@ -1590,8 +1564,12 @@ def handle_predict() -> None:
         return
 
     required_widget_keys = [
-        "bmi_method_radio", "age_input", "sex_input",
-        "children_input", "smoker_input", "region_input",
+        "bmi_method_radio",
+        "age_input",
+        "sex_input",
+        "children_input",
+        "smoker_input",
+        "region_input",
     ]
     if not all(k in st.session_state for k in required_widget_keys):
         st.session_state.prediction_error = "⚠️ Form not ready — please try again."
@@ -1629,16 +1607,16 @@ def handle_predict() -> None:
 
             try:
                 _anchor_pred = Prediction.from_form_data(
-                    form_data, prediction, model_used,
+                    form_data,
+                    prediction,
+                    model_used,
                     timestamp=st.session_state.predictions_history[-1].timestamp,
                 )
                 _anchor_ts = _anchor_pred.timestamp.strftime("%Y%m%d_%H%M%S")
                 _anchor_df = pd.DataFrame([_anchor_pred.to_dict()])
                 st.session_state.export_anchor_key = _anchor_ts
                 st.session_state.export_anchor_csv = _anchor_df.to_csv(index=False)
-                st.session_state.export_anchor_json = json.dumps(
-                    _anchor_pred.to_dict(), indent=2
-                )
+                st.session_state.export_anchor_json = json.dumps(_anchor_pred.to_dict(), indent=2)
             except Exception as _e:
                 logger.warning(f"Could not cache export anchor: {_e}")
 
@@ -1657,7 +1635,7 @@ def handle_predict() -> None:
 def get_enhanced_theme_css_cached() -> str:
     """Thin wrapper: reads mutable session_state, delegates to lru_cache'd builder.
 
-    v3.5.12 (BUG-3 fix): Moved all palette / CSS logic into _build_theme_css()
+    v3.5.12 : Moved all palette / CSS logic into _build_theme_css()
     which is decorated with @lru_cache(maxsize=2).  The CSS string is now built
     only once per (is_dark=True/False) value for the server process lifetime.
     """
@@ -1677,61 +1655,61 @@ def _build_theme_css(is_dark: bool) -> str:
     """
 
     if is_dark:
-        bg_app         = "#0e1117"
-        bg_app_end     = "#0e1117"
-        bg_primary     = "#1e2130"
-        bg_secondary   = "#262730"
-        bg_tertiary    = "#2d3250"
-        bg_sidebar     = "#0e1117"
+        bg_app = "#0e1117"
+        bg_app_end = "#0e1117"
+        bg_primary = "#1e2130"
+        bg_secondary = "#262730"
+        bg_tertiary = "#2d3250"
+        bg_sidebar = "#0e1117"
         bg_sidebar_end = "#1a1f2e"
-        text_primary   = "#fafafa"
+        text_primary = "#fafafa"
         text_secondary = "#e2e8f0"
-        text_muted     = "#a0aec0"
-        text_inverse   = "#ffffff"
-        border_light   = "rgba(255, 255, 255, 0.12)"
-        border_medium  = "rgba(255, 255, 255, 0.22)"
-        shadow_sm      = "0 2px 4px   rgba(0, 0, 0, 0.45)"
-        shadow_md      = "0 4px 6px   rgba(0, 0, 0, 0.55)"
-        shadow_lg      = "0 10px 30px rgba(0, 0, 0, 0.65)"
-        shadow_xl      = "0 20px 50px rgba(0, 0, 0, 0.75)"
-        overlay_light  = "rgba(255, 255, 255, 0.05)"
+        text_muted = "#a0aec0"
+        text_inverse = "#ffffff"
+        border_light = "rgba(255, 255, 255, 0.12)"
+        border_medium = "rgba(255, 255, 255, 0.22)"
+        shadow_sm = "0 2px 4px   rgba(0, 0, 0, 0.45)"
+        shadow_md = "0 4px 6px   rgba(0, 0, 0, 0.55)"
+        shadow_lg = "0 10px 30px rgba(0, 0, 0, 0.65)"
+        shadow_xl = "0 20px 50px rgba(0, 0, 0, 0.75)"
+        overlay_light = "rgba(255, 255, 255, 0.05)"
         overlay_medium = "rgba(255, 255, 255, 0.10)"
-        tab_hover_bg   = "rgba(90, 103, 216, 0.28)"
+        tab_hover_bg = "rgba(90, 103, 216, 0.28)"
         expander_hover = "rgba(90, 103, 216, 0.18)"
         # Dropdown portal colours (dark palette)
-        portal_bg      = "#1e2130"
-        portal_text    = "#fafafa"
-        portal_hover   = "rgba(255, 255, 255, 0.10)"
-        color_scheme   = "dark"
+        portal_bg = "#1e2130"
+        portal_text = "#fafafa"
+        portal_hover = "rgba(255, 255, 255, 0.10)"
+        color_scheme = "dark"
     else:
-        bg_app         = "#e8eef5"
-        bg_app_end     = "#dce4f0"
-        bg_primary     = "#ffffff"
-        bg_secondary   = "#f7fafc"
-        bg_tertiary    = "#edf2f7"
-        bg_sidebar     = "#ffffff"
+        bg_app = "#e8eef5"
+        bg_app_end = "#dce4f0"
+        bg_primary = "#ffffff"
+        bg_secondary = "#f7fafc"
+        bg_tertiary = "#edf2f7"
+        bg_sidebar = "#ffffff"
         bg_sidebar_end = "#f7fafc"
-        text_primary   = "#1a202c"
+        text_primary = "#1a202c"
         text_secondary = "#2d3748"
-        text_muted     = "#718096"
-        text_inverse   = "#ffffff"
-        border_light   = "rgba(128, 128, 128, 0.20)"
-        border_medium  = "rgba(128, 128, 128, 0.35)"
-        shadow_sm      = "0 2px 4px  rgba(0, 0, 0, 0.18)"
-        shadow_md      = "0 4px 6px  rgba(0, 0, 0, 0.25)"
-        shadow_lg      = "0 10px 30px rgba(0, 0, 0, 0.35)"
-        shadow_xl      = "0 20px 50px rgba(0, 0, 0, 0.45)"
-        overlay_light  = "rgba(128, 128, 128, 0.05)"
+        text_muted = "#718096"
+        text_inverse = "#ffffff"
+        border_light = "rgba(128, 128, 128, 0.20)"
+        border_medium = "rgba(128, 128, 128, 0.35)"
+        shadow_sm = "0 2px 4px  rgba(0, 0, 0, 0.18)"
+        shadow_md = "0 4px 6px  rgba(0, 0, 0, 0.25)"
+        shadow_lg = "0 10px 30px rgba(0, 0, 0, 0.35)"
+        shadow_xl = "0 20px 50px rgba(0, 0, 0, 0.45)"
+        overlay_light = "rgba(128, 128, 128, 0.05)"
         overlay_medium = "rgba(128, 128, 128, 0.12)"
-        tab_hover_bg   = "rgba(90, 103, 216, 0.12)"
+        tab_hover_bg = "rgba(90, 103, 216, 0.12)"
         expander_hover = "rgba(90, 103, 216, 0.07)"
         # Dropdown portal colours (light palette)
-        portal_bg      = "#ffffff"
-        portal_text    = "#1a202c"
-        portal_hover   = "rgba(128, 128, 128, 0.12)"
-        color_scheme   = "light"
+        portal_bg = "#ffffff"
+        portal_text = "#1a202c"
+        portal_hover = "rgba(128, 128, 128, 0.12)"
+        color_scheme = "light"
 
-    # BUG-4 FIX: compute primary hex explicitly here so the toggle ON-state
+    # compute primary hex explicitly here so the toggle ON-state
     # CSS uses a hard-wired colour string rather than var(--primary).
     # var(--primary) resolves via var(--primary-color, #5a67d8); Streamlit can
     # override --primary-color with its own default red (#FF4B4B) when the
@@ -1743,7 +1721,7 @@ def _build_theme_css(is_dark: bool) -> str:
     return f"""
     <style>
     /* ===== THEME VARIABLES (v3.5.11 — Python-driven palette, dark-mode aware) ===== */
-    /* BUG-3/4 FIX: color-scheme is now scoped to the active palette value so
+    /* color-scheme is now scoped to the active palette value so
        the browser/OS renders UA controls (scrollbars, native inputs) in the
        correct palette, and so Styletron's prefers-color-scheme detection is
        NOT confused by a hard-wired "light" in dark-mode.
@@ -1870,7 +1848,7 @@ def _build_theme_css(is_dark: bool) -> str:
         border-color: var(--border-light) !important;
     }}
 
-    /* ===== BASEWEB INPUT CONTAINERS (BUG-4 FIX v3.5.13) ===== */
+    /* ===== BASEWEB INPUT CONTAINERS  ===== */
     [data-baseweb="base-input"] {{
         background-color: var(--bg-primary) !important;
         color: var(--text-primary) !important;
@@ -1898,7 +1876,7 @@ def _build_theme_css(is_dark: bool) -> str:
     [data-baseweb="select"] span {{
         color: var(--text-primary) !important;
     }}
-    /* BUG-2 FIX (v3.5.11): The sidebar compound-selector fix covered sidebar
+    /* The sidebar compound-selector fix covered sidebar
        selects but NOT main-content selects (e.g. What-If "Vary parameter").
        Styletron's <style data-hydrate> sets the inner span text to white after
        our block, winning the source-order battle for same-!important rules.
@@ -1922,7 +1900,7 @@ def _build_theme_css(is_dark: bool) -> str:
     /* Root problem: BaseWeb's Styletron CSS-in-JS injects its theme styles
        into a <style data-hydrate> tag AFTER our <style> tag in React's render
        cycle, winning the same-!important source-order battle.
-       v3.5.11 fix: CSS variables --portal-bg / --portal-text / --portal-hover
+       CSS variables --portal-bg / --portal-text / --portal-hover
        are set per-palette by Python (_build_theme_css), so the correct values
        are baked directly into the stylesheet rather than relying on cascade.
        html body prefix provides maximum specificity without JS. */
@@ -1972,7 +1950,7 @@ def _build_theme_css(is_dark: bool) -> str:
     }}
 
     /* ===== TOGGLE TRACK ===== */
-    /* BUG-3/4 FIX (v3.5.11):
+    /*
        1. color-scheme rule scoped to active palette at :root level (above) so
           UA rendering is correct without needing it on stCheckbox.
        2. Removed `color-scheme: light` from [data-testid="stCheckbox"] which
@@ -1986,7 +1964,7 @@ def _build_theme_css(is_dark: bool) -> str:
         border-radius: 999px !important;
         transition: background-color 0.2s ease !important;
     }}
-    /* BUG-4 FIX (v3.5.12): use hard-wired palette hex instead of
+    /* use hard-wired palette hex instead of
        var(--primary) which chains to var(--primary-color, #5a67d8).
        Streamlit can override --primary-color with its own red (#FF4B4B)
        when the hamburger/OS theme changes, turning the ON track red. */
@@ -2000,7 +1978,7 @@ def _build_theme_css(is_dark: bool) -> str:
     }}
 
     /* ===== CHECKBOX (st.checkbox) ===== */
-    /* NOTE: color-scheme is no longer set per-widget here (BUG-4 FIX).
+    /* NOTE: color-scheme is no longer set per-widget here.
        It is set on :root with the active palette value. The per-widget
        color-scheme was locking the Dark Mode toggle into light rendering. */
     [data-testid="stCheckbox"] input[type="checkbox"] {{
@@ -2014,7 +1992,7 @@ def _build_theme_css(is_dark: bool) -> str:
        our <style> tag, winning source-order.  The checkbox visual indicator
        remains dark on OS-dark systems.  Mitigation: replace any user-facing
        st.checkbox() that shows toggle semantics with st.toggle() instead.
-       The "Multivariate" checkbox in What-If has been migrated (BUG-5 FIX). */
+       The "Multivariate" checkbox in What-If has been migrated. */
 
     /* ===== TITLE HEADER ===== */
     .title-container {{
@@ -2143,7 +2121,7 @@ def _build_theme_css(is_dark: bool) -> str:
     }}
 
     /* ===== THEMED HTML TABLE ===== */
-    /* Mechanism D FIX (v3.5.11): All color and background-color declarations
+    /* All color and background-color declarations
        now carry !important so they cannot be silently overridden by any future
        Streamlit/BaseWeb global table rules, regardless of injection order. */
     .themed-table-wrapper {{
@@ -2198,7 +2176,7 @@ def _build_theme_css(is_dark: bool) -> str:
     [data-testid="stFileUploaderDropzone"] svg {{
         fill: var(--text-muted) !important;
     }}
-    /* BUG-5 FIX (v3.5.12): the "Browse files" button inside the dropzone was
+    /* the "Browse files" button inside the dropzone was
        not targeted by any rule, so it inherited the browser/OS dark background
        in light mode — appearing near-black against the light dropzone area.
        Selectors cover both the known data-testid and the bare button fallback. */
@@ -2331,8 +2309,6 @@ def apply_enhanced_ui() -> None:
     st.markdown(get_enhanced_theme_css_cached(), unsafe_allow_html=True)
 
 
-
-
 # =============================================================================
 # UI COMPONENTS
 # =============================================================================
@@ -2341,7 +2317,7 @@ def apply_enhanced_ui() -> None:
 def create_input_form() -> None:
     """Create sidebar input form with stable layout."""
     st.sidebar.markdown("### ⚙️ Mode")
-    # BUG-6 FIX: value= is ignored when key= maps to an existing session_state
+    # value= is ignored when key= maps to an existing session_state
     # entry (already guaranteed by init_session_state). Removed to avoid the
     # misleading impression that value= drives initialization on every rerun.
     st.sidebar.toggle(
@@ -2392,9 +2368,7 @@ def create_input_form() -> None:
             )
 
             if is_valid and calculated_bmi is not None:
-                st.success(
-                    f"✓ BMI: **{calculated_bmi:.1f}** ({get_bmi_category(calculated_bmi)})"
-                )
+                st.success(f"✓ BMI: **{calculated_bmi:.1f}** ({get_bmi_category(calculated_bmi)})")
                 st.session_state.calculated_bmi = calculated_bmi
             else:
                 st.error(error_msg if error_msg else "❌ Invalid BMI calculation")
@@ -2520,7 +2494,6 @@ def display_welcome_message() -> None:
     )
 
 
-
 def display_footer() -> None:
     """Display application footer."""
     st.markdown(
@@ -2574,8 +2547,7 @@ def display_metrics_panel() -> None:
         st.warning(f"⚠️ High error rate: {error_rate:.1f}% of predictions failing")
     if p99 > P99_ALERT_THRESHOLD_MS:
         st.warning(
-            f"⚠️ Latency degradation: p99={p99:.0f}ms "
-            f"(threshold {P99_ALERT_THRESHOLD_MS:.0f}ms)"
+            f"⚠️ Latency degradation: p99={p99:.0f}ms " f"(threshold {P99_ALERT_THRESHOLD_MS:.0f}ms)"
         )
     if rejected > 0:
         st.warning(f"⚠️ Concurrency cap hit: {rejected} request(s) rejected (429)")
@@ -2646,7 +2618,7 @@ def display_mlflow_panel() -> None:
             val_r2 = metrics.get("val_r2")
             rows.append(
                 {
-                    # BUG-NEW-3 FIX: 6 columns at white-space:nowrap exceed the
+                    # 6 columns at white-space:nowrap exceed the
                     # 21rem sidebar width.  Streamlit's sidebar container has
                     # overflow:hidden at a higher stacking level so the
                     # themed-table-wrapper's overflow-x:auto scrollbar is
@@ -2656,13 +2628,13 @@ def display_mlflow_panel() -> None:
                     "Run ID": run.info.run_id[:8],
                     "RMSE": f"${val_rmse:,.0f}" if val_rmse is not None else "—",
                     "R²": f"{val_r2:.4f}" if val_r2 is not None else "—",
-                    "Started": datetime.fromtimestamp(
-                        run.info.start_time / 1000
-                    ).strftime("%m-%d %H:%M"),
+                    "Started": datetime.fromtimestamp(run.info.start_time / 1000).strftime(
+                        "%m-%d %H:%M"
+                    ),
                 }
             )
 
-        # BUG-CODE-2 FIX: st.dataframe() / Glide Data Grid does not inherit
+        # st.dataframe() / Glide Data Grid does not inherit
         # CSS var() overrides — under OS dark the rows become invisible.
         # render_html_table() emits a themed HTML table that is always readable.
         render_html_table(pd.DataFrame(rows), numeric_cols=[])
@@ -2681,8 +2653,8 @@ def display_mlflow_panel() -> None:
 
 def display_admin_dashboard() -> None:
     """Display admin dashboard in sidebar."""
-    # BUG-7 FIX: st.sidebar.checkbox was not migrated alongside the What-If
-    # multivariate checkbox (BUG-5 in v3.5.11 changelog).  BaseWeb uses
+    # st.sidebar.checkbox was not migrated alongside the What-If
+    # multivariate checkbox.  BaseWeb uses
     # data-baseweb="checkbox" for BOTH st.checkbox() and st.toggle(); Styletron
     # injects its dark-theme indicator background after our <style> tag, winning
     # source-order and rendering a dark filled square on OS-dark systems.
@@ -2696,9 +2668,7 @@ def display_admin_dashboard() -> None:
 
     if st.session_state.show_admin:
         with st.sidebar.expander("⚙️ System Status", expanded=False):
-            is_healthy, model_name, _, pipeline_version, hybrid_version = (
-                check_api_health_cached()
-            )
+            is_healthy, model_name, _, pipeline_version, hybrid_version = check_api_health_cached()
             st.write(f"**API Status:** {'✅' if is_healthy else '❌'}")
             st.write(f"**Model:** {model_name or 'N/A'}")
             if pipeline_version:
@@ -2710,8 +2680,7 @@ def display_admin_dashboard() -> None:
             st.write(f"**History Size:** {len(history)}")
             st.write(f"**Max History:** {MAX_HISTORY_SIZE}")
             st.write(
-                f"**Validated:** "
-                f"{'Yes' if st.session_state.get('history_validated') else 'No'}"
+                f"**Validated:** " f"{'Yes' if st.session_state.get('history_validated') else 'No'}"
             )
 
             try:
@@ -2730,7 +2699,7 @@ def display_admin_dashboard() -> None:
                 if st.button("🗑️ Clear Cache", width="stretch", key="admin_clear_cache"):
                     st.cache_data.clear()
                     st.cache_resource.clear()
-                    # BUG-6 FIX: _build_theme_css uses @lru_cache(maxsize=2),
+                    # _build_theme_css uses @lru_cache(maxsize=2),
                     # not @st.cache_data, so st.cache_data.clear() never reaches
                     # it.  Call .cache_clear() explicitly so a theme upgrade or
                     # palette change takes effect without a server restart.
@@ -2767,9 +2736,7 @@ def render_html_table(
         return
 
     if numeric_cols is None:
-        numeric_cols = [
-            c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])
-        ]
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
     numeric_set = set(numeric_cols)
 
     import html as _html
@@ -2779,14 +2746,10 @@ def render_html_table(
         safe = _html.escape(str(val))
         return f"<{tag}{cls}>{safe}</{tag}>"
 
-    header_cells = "".join(
-        _cell("th", col, col in numeric_set) for col in df.columns
-    )
+    header_cells = "".join(_cell("th", col, col in numeric_set) for col in df.columns)
     rows_html = ""
     for _, row in df.iterrows():
-        cells = "".join(
-            _cell("td", row[col], col in numeric_set) for col in df.columns
-        )
+        cells = "".join(_cell("td", row[col], col in numeric_set) for col in df.columns)
         rows_html += f"<tr>{cells}</tr>"
 
     table_html = f"""
@@ -2811,8 +2774,7 @@ def display_comparison() -> None:
             st.info("ℹ️ Make one more prediction to compare scenarios")
             p = history[0]
             st.write(
-                f"**Prediction 1:** Age={p.age}, BMI={p.bmi:.1f}, "
-                f"Premium=${p.prediction:,.2f}"
+                f"**Prediction 1:** Age={p.age}, BMI={p.bmi:.1f}, " f"Premium=${p.prediction:,.2f}"
             )
         else:
             st.info("ℹ️ Make at least 2 predictions to compare")
@@ -2838,7 +2800,7 @@ def display_comparison() -> None:
 
     chart_data = pd.DataFrame(
         [
-            # BUG-1 FIX: cast Scenario to str so Plotly uses a categorical
+            # cast Scenario to str so Plotly uses a categorical
             # axis instead of a continuous numeric one.  Integer values produce
             # fractional ticks (0.5, 1, 1.5, 2, 2.5) between bars; string
             # values force one discrete tick per bar.
@@ -2866,9 +2828,9 @@ def display_comparison() -> None:
     )
     # THEME-4/5: _chart_layout() replaces **CHART_LAYOUT_TEMPLATE so that
     # font.color and hoverlabel colours are set via Plotly's layout API.
-    # BUG-1 FIX (guard): xaxis type="category" is redundant once Scenario is
+    # xaxis type="category" is redundant once Scenario is
     # str, but keeps the axis categorical if the column is ever re-cast elsewhere.
-    fig.update_layout(**_chart_layout(showlegend=False, xaxis=dict(type="category")))
+    fig.update_layout(**_chart_layout(showlegend=False, xaxis={"type": "category"}))
     fig.update_xaxes(**CHART_AXIS_CONFIG)
     fig.update_yaxes(**CHART_AXIS_CONFIG)
     st.plotly_chart(fig, config={"displayModeBar": False}, key="comparison_chart")
@@ -2903,8 +2865,18 @@ def _get_analysis_parameters() -> dict[str, dict]:
         },
         "bmi": {
             "values": [
-                15.0, 17.0, 18.5, 22.0, 25.0, 27.5,
-                30.0, 35.0, 40.0, 45.0, 50.0, 55.0,
+                15.0,
+                17.0,
+                18.5,
+                22.0,
+                25.0,
+                27.5,
+                30.0,
+                35.0,
+                40.0,
+                45.0,
+                50.0,
+                55.0,
             ],
             "thresholds": {
                 "18.5": "Underweight",
@@ -2945,8 +2917,12 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
 
     def _call_one(val):
         kwargs = {
-            "age": base.age, "sex": base.sex, "bmi": base.bmi,
-            "children": base.children, "smoker": base.smoker, "region": base.region,
+            "age": base.age,
+            "sex": base.sex,
+            "bmi": base.bmi,
+            "children": base.children,
+            "smoker": base.smoker,
+            "region": base.region,
         }
         kwargs[param] = val
         try:
@@ -2967,8 +2943,7 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
         for future in concurrent.futures.as_completed(future_map):
             val, result = future.result()
             done += 1
-            progress.progress(done / total_values,
-                              text=f"Processing {done}/{total_values}...")
+            progress.progress(done / total_values, text=f"Processing {done}/{total_values}...")
             if result:
                 results.append({param: val, "premium": result[0]})
             else:
@@ -2978,17 +2953,12 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
     progress.empty()
 
     if failed_count:
-        st.warning(
-            f"⚠️ {failed_count}/{total_values} data points failed "
-            "(API errors — see logs)"
-        )
+        st.warning(f"⚠️ {failed_count}/{total_values} data points failed " "(API errors — see logs)")
 
     if results:
         df = pd.DataFrame(results)
         baseline_premium = base.prediction
-        df["change_pct"] = (
-            (df["premium"] - baseline_premium) / baseline_premium * 100
-        ).round(1)
+        df["change_pct"] = ((df["premium"] - baseline_premium) / baseline_premium * 100).round(1)
 
         fig = px.line(
             df,
@@ -3001,12 +2971,12 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
 
         # THEME-6: line/marker colours use theme helpers instead of hardcoded hex.
         fig.update_traces(
-            line=dict(color=_primary_color(), width=3),
-            marker=dict(
-                size=10,
-                color=_primary_dark_color(),
-                line=dict(color=_marker_border_color(), width=2),
-            ),
+            line={"color": _primary_color(), "width": 3},
+            marker={
+                "size": 10,
+                "color": _primary_dark_color(),
+                "line": {"color": _marker_border_color(), "width": 2},
+            },
         )
 
         for threshold_val, label in param_config["thresholds"].items():
@@ -3033,20 +3003,16 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
         fig.update_xaxes(**CHART_AXIS_CONFIG)
         fig.update_yaxes(**CHART_AXIS_CONFIG)
 
-        st.plotly_chart(
-            fig, config={"displayModeBar": False}, key="sensitivity_chart_uni"
-        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key="sensitivity_chart_uni")
 
         st.markdown("**💡 Medical Cost Insights:**")
         st.info(param_config["medical_info"])
 
         display_df = df.copy()
         display_df["premium"] = display_df["premium"].apply(lambda x: f"${x:,.2f}")
-        display_df["change_pct"] = display_df["change_pct"].apply(
-            lambda x: f"{x:+.1f}%"
-        )
+        display_df["change_pct"] = display_df["change_pct"].apply(lambda x: f"{x:+.1f}%")
         display_df.columns = [param_config["label"], "Premium", "% Change"]
-        # BUG-CODE-1 FIX: st.dataframe() uses Glide Data Grid which does not
+        # st.dataframe() uses Glide Data Grid which does not
         # inherit CSS var() overrides.  Under OS dark / "Use system setting" the
         # grid renders light text on a white bg (our override) → invisible rows.
         # render_html_table() emits a plain HTML table that uses CSS variables
@@ -3056,9 +3022,7 @@ def _run_univariate_analysis(base: Prediction, param: str, param_config: dict) -
         st.error("❌ All data points failed. Check API connectivity.")
 
 
-def _run_multivariate_analysis(
-    base: Prediction, param: str, param_config: dict
-) -> None:
+def _run_multivariate_analysis(base: Prediction, param: str, param_config: dict) -> None:
     """Run multivariate sensitivity analysis with parallelised API calls."""
     import threading as _threading
 
@@ -3074,8 +3038,12 @@ def _run_multivariate_analysis(
 
     def _call_one(smoker_status, val):
         kwargs = {
-            "age": base.age, "sex": base.sex, "bmi": base.bmi,
-            "children": base.children, "smoker": smoker_status, "region": base.region,
+            "age": base.age,
+            "sex": base.sex,
+            "bmi": base.bmi,
+            "children": base.children,
+            "smoker": smoker_status,
+            "region": base.region,
         }
         kwargs[param] = val
         try:
@@ -3091,19 +3059,14 @@ def _run_multivariate_analysis(
         max_workers=min(4, total_runs),
         thread_name_prefix="sweep_multi",
     ) as pool:
-        future_map = {
-            pool.submit(_call_one, s, v): (s, v) for s, v in combinations
-        }
+        future_map = {pool.submit(_call_one, s, v): (s, v) for s, v in combinations}
         done = 0
         for future in concurrent.futures.as_completed(future_map):
             smoker_status, val, result = future.result()
             done += 1
-            progress.progress(done / total_runs,
-                              text=f"Processing {done}/{total_runs}...")
+            progress.progress(done / total_runs, text=f"Processing {done}/{total_runs}...")
             if result:
-                results.append(
-                    {param: val, "premium": result[0], "smoker": smoker_status}
-                )
+                results.append({param: val, "premium": result[0], "smoker": smoker_status})
             else:
                 failed_count += 1
 
@@ -3111,10 +3074,7 @@ def _run_multivariate_analysis(
     progress.empty()
 
     if failed_count:
-        st.warning(
-            f"⚠️ {failed_count}/{total_runs} data points failed "
-            "(API errors — see logs)"
-        )
+        st.warning(f"⚠️ {failed_count}/{total_runs} data points failed " "(API errors — see logs)")
 
     if results:
         df = pd.DataFrame(results)
@@ -3136,8 +3096,8 @@ def _run_multivariate_analysis(
 
         # THEME-6: marker border uses theme helper
         fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=10, line=dict(color=_marker_border_color(), width=2)),
+            line={"width": 3},
+            marker={"size": 10, "line": {"color": _marker_border_color(), "width": 2}},
         )
 
         for threshold_val, label in param_config["thresholds"].items():
@@ -3151,25 +3111,27 @@ def _run_multivariate_analysis(
             )
 
         # THEME-4/5: _chart_layout() instead of **CHART_LAYOUT_TEMPLATE
-        # BUG-3 FIX: legend y=1.02 places the legend *above* the plot area in
+        # legend y=1.02 places the legend *above* the plot area in
         # Plotly's paper coordinate system.  Without an explicit margin.t the
         # canvas is not tall enough for y>1, so Plotly clips the legend back
         # inside the top-right corner of the chart.  margin.t=100 gives the
         # required canvas headroom.
         fig.update_layout(
             **_chart_layout(
-                margin=dict(t=100, b=70, l=60, r=20),
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-                )
+                margin={"t": 100, "b": 70, "l": 60, "r": 20},
+                legend={
+                    "orientation": "h",
+                    "yanchor": "bottom",
+                    "y": 1.02,
+                    "xanchor": "right",
+                    "x": 1,
+                },
             )
         )
         fig.update_xaxes(**CHART_AXIS_CONFIG)
         fig.update_yaxes(**CHART_AXIS_CONFIG)
 
-        st.plotly_chart(
-            fig, config={"displayModeBar": False}, key="sensitivity_chart_multi"
-        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key="sensitivity_chart_multi")
 
         st.markdown("**📊 Smoking Impact Analysis:**")
         impact_df = df.pivot_table(index=param, columns="smoker", values="premium")
@@ -3270,11 +3232,9 @@ def display_sensitivity_analysis() -> None:
 
     col1, col2 = st.columns([3, 1])
     with col1:
-        param = st.selectbox(
-            "Vary parameter:", list(param_config.keys()), key="sensitivity_param"
-        )
+        param = st.selectbox("Vary parameter:", list(param_config.keys()), key="sensitivity_param")
     with col2:
-        # BUG-5 FIX: st.checkbox renders a dark filled square on OS-dark systems
+        # st.checkbox renders a dark filled square on OS-dark systems
         # because BaseWeb's indicator div shares data-baseweb="checkbox" with
         # st.toggle, making CSS targeting impossible without also affecting toggles.
         # st.toggle produces a pill shape with unambiguous visual state.
@@ -3302,9 +3262,9 @@ def display_batch_predictions() -> None:
 
     timeout_minutes = MAX_BATCH_TIME_SECONDS // 60
 
-    # THEME-3 FIX: replaced hardcoded #e6f2ff / #f0e6ff / #2d3748 with CSS
+    # replaced hardcoded #e6f2ff / #f0e6ff / #2d3748 with CSS
     # variables so the banner renders correctly in both light and dark themes.
-    # BUG-2 FIX: added "Max {MAX_FILE_SIZE_MB}MB file size" to the Limits line
+    # added "Max {MAX_FILE_SIZE_MB}MB file size" to the Limits line
     # so the displayed constraints match the validate_upload() rejection threshold
     # (previously the widget showed Streamlit's native "200MB" label while the
     # server would reject anything over 5MB — confusing silent failure for users).
@@ -3361,21 +3321,16 @@ def display_batch_predictions() -> None:
                 return
 
             if len(df) > MAX_BATCH_ROWS:
-                st.error(
-                    f"❌ File too large. Max {MAX_BATCH_ROWS:,} rows, "
-                    f"found {len(df):,}"
-                )
+                st.error(f"❌ File too large. Max {MAX_BATCH_ROWS:,} rows, " f"found {len(df):,}")
                 return
 
             st.success(f"✅ Loaded {len(df)} records")
-            # BUG-CODE-2b FIX: st.dataframe() Glide Data Grid invisible in dark OS.
+            # st.dataframe() Glide Data Grid invisible in dark OS.
             render_html_table(df.head(), numeric_cols=["age", "bmi", "children"])
 
             estimated_mb = (len(df) * BYTES_PER_ROW_ESTIMATE) / (1024 * 1024)
             if estimated_mb > 100:
-                st.warning(
-                    f"⚠️ Large dataset: ~{estimated_mb:.0f}MB estimated memory usage"
-                )
+                st.warning(f"⚠️ Large dataset: ~{estimated_mb:.0f}MB estimated memory usage")
                 proceed = st.checkbox(
                     "I understand this may take time and memory", key="memory_confirm"
                 )
@@ -3383,9 +3338,7 @@ def display_batch_predictions() -> None:
                     return
             elif len(df) > 100:
                 st.warning(f"⚠️ {len(df)} records may take time")
-                proceed = st.checkbox(
-                    "Proceed with batch processing", key="batch_confirm"
-                )
+                proceed = st.checkbox("Proceed with batch processing", key="batch_confirm")
                 if not proceed:
                     return
 
@@ -3399,10 +3352,7 @@ def display_batch_predictions() -> None:
 
                 max_results = min(len(records), MAX_RESULTS_MEMORY)
                 if len(records) > max_results:
-                    st.warning(
-                        f"⚠️ Processing limited to {max_results:,} rows "
-                        "(memory safety)"
-                    )
+                    st.warning(f"⚠️ Processing limited to {max_results:,} rows " "(memory safety)")
                 records_to_send = records[:max_results]
 
                 start_time = time.time()
@@ -3422,8 +3372,7 @@ def display_batch_predictions() -> None:
                         ]
 
                         st.write(
-                            f"⚡ Sending {len(batch_payload):,} records to "
-                            "batch endpoint..."
+                            f"⚡ Sending {len(batch_payload):,} records to " "batch endpoint..."
                         )
                         batch_response = client.predict_batch(batch_payload)
 
@@ -3431,9 +3380,7 @@ def display_batch_predictions() -> None:
                         for item in batch_response.get("results", []):
                             idx = item.get("index", 0)
                             original_row = (
-                                records_to_send[idx]
-                                if idx < len(records_to_send)
-                                else {}
+                                records_to_send[idx] if idx < len(records_to_send) else {}
                             )
                             results.append(
                                 {
@@ -3459,15 +3406,10 @@ def display_batch_predictions() -> None:
                             f"Batch endpoint failed ({batch_err}), "
                             "falling back to row-by-row processing"
                         )
-                        st.warning(
-                            "⚠️ Batch endpoint unavailable — switching to "
-                            "row-by-row mode"
-                        )
+                        st.warning("⚠️ Batch endpoint unavailable — switching to " "row-by-row mode")
                         results = []
                         processing_status = "complete"
-                        progress = st.progress(
-                            0, text="Starting fallback processing..."
-                        )
+                        progress = st.progress(0, text="Starting fallback processing...")
                         total_to_process = len(records_to_send)
 
                         for idx, row_dict in enumerate(records_to_send):
@@ -3476,14 +3418,11 @@ def display_batch_predictions() -> None:
                                 processing_status = "timeout"
                                 break
 
-                            results.append(
-                                process_batch_row_safe(row_dict, client)
-                            )
+                            results.append(process_batch_row_safe(row_dict, client))
 
                             if (
-                                (idx + 1) % BATCH_UPDATE_INTERVAL == 0
-                                or idx == total_to_process - 1
-                            ):
+                                idx + 1
+                            ) % BATCH_UPDATE_INTERVAL == 0 or idx == total_to_process - 1:
                                 progress.progress(
                                     (idx + 1) / total_to_process,
                                     text=f"Processing {idx + 1}/{total_to_process}...",
@@ -3491,9 +3430,7 @@ def display_batch_predictions() -> None:
 
                         progress.empty()
                         if processing_status == "timeout":
-                            status.update(
-                                label="Processing stopped (timeout)", state="error"
-                            )
+                            status.update(label="Processing stopped (timeout)", state="error")
                         else:
                             status.update(
                                 label="Processing complete (fallback)!",
@@ -3502,26 +3439,18 @@ def display_batch_predictions() -> None:
 
                 results_df = pd.DataFrame(results)
 
-                success = len(
-                    [r for r in results if r.get("status") == "success"]
-                )
+                success = len([r for r in results if r.get("status") == "success"])
 
                 if processing_status == "timeout":
                     st.warning(
-                        f"⚠️ Processed {len(results)}/{len(df)} records "
-                        f"({success} successful)"
+                        f"⚠️ Processed {len(results)}/{len(df)} records " f"({success} successful)"
                     )
                 elif len(records) > max_results:
-                    st.warning(
-                        f"⚠️ Processed {len(results)}/{len(df)} records "
-                        "(memory limit)"
-                    )
+                    st.warning(f"⚠️ Processed {len(results)}/{len(df)} records " "(memory limit)")
                 else:
-                    st.success(
-                        f"✅ Processed {len(results)} records ({success} successful)"
-                    )
+                    st.success(f"✅ Processed {len(results)} records ({success} successful)")
 
-                # BUG-CODE-2c FIX: same Glide Data Grid visibility issue.
+                # same Glide Data Grid visibility issue.
                 render_html_table(results_df, numeric_cols=["predicted_cost"])
 
                 batch_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3594,20 +3523,18 @@ def display_model_stats() -> None:
         )
         # THEME-6: theme-aware line/marker colours
         fig.update_traces(
-            line=dict(color=_primary_color(), width=3),
-            marker=dict(
-                size=8,
-                color=_primary_dark_color(),
-                line=dict(color=_marker_border_color(), width=2),
-            ),
+            line={"color": _primary_color(), "width": 3},
+            marker={
+                "size": 8,
+                "color": _primary_dark_color(),
+                "line": {"color": _marker_border_color(), "width": 2},
+            },
         )
         # THEME-4/5: _chart_layout()
         fig.update_layout(**_chart_layout())
         fig.update_xaxes(**CHART_AXIS_CONFIG)
         fig.update_yaxes(**CHART_AXIS_CONFIG)
-        st.plotly_chart(
-            fig, config={"displayModeBar": False}, key="premium_trend_chart"
-        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key="premium_trend_chart")
 
     with st.expander("📊 Model Usage", expanded=False):
         counts = df["model_used"].value_counts()
@@ -3624,22 +3551,22 @@ def display_model_stats() -> None:
         fig.update_traces(
             textposition="inside",
             textinfo="percent+label",
-            marker=dict(line=dict(color=_marker_border_color(), width=2)),
+            marker={"line": {"color": _marker_border_color(), "width": 2}},
         )
         # THEME-4/5: _chart_layout() — exclude hovermode for pie charts
-        pie_layout = {
-            k: v for k, v in _chart_layout().items() if k != "hovermode"
-        }
+        pie_layout = {k: v for k, v in _chart_layout().items() if k != "hovermode"}
         fig.update_layout(
             **pie_layout,
             showlegend=True,
-            legend=dict(
-                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5
-            ),
+            legend={
+                "orientation": "h",
+                "yanchor": "bottom",
+                "y": -0.2,
+                "xanchor": "center",
+                "x": 0.5,
+            },
         )
-        st.plotly_chart(
-            fig, config={"displayModeBar": False}, key="model_usage_chart"
-        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key="model_usage_chart")
 
     with st.expander("⚠️ Risk Distribution", expanded=False):
         if not history:
@@ -3648,11 +3575,7 @@ def display_model_stats() -> None:
 
         risks = [get_risk_level(calculate_risk_score(p)) for p in history]
         risk_df = pd.DataFrame({"Risk": risks})
-        counts = (
-            risk_df["Risk"]
-            .value_counts()
-            .reindex(["Low", "Medium", "High"], fill_value=0)
-        )
+        counts = risk_df["Risk"].value_counts().reindex(["Low", "Medium", "High"], fill_value=0)
 
         fig = px.bar(
             x=counts.index,
@@ -3677,14 +3600,10 @@ def display_model_stats() -> None:
         fig.update_layout(**_chart_layout(showlegend=False))
         fig.update_xaxes(**CHART_AXIS_CONFIG)
         fig.update_yaxes(**CHART_AXIS_CONFIG)
-        st.plotly_chart(
-            fig, config={"displayModeBar": False}, key="risk_dist_chart"
-        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key="risk_dist_chart")
 
     with st.expander("📋 Recent Predictions", expanded=False):
-        recent = df.tail(10)[
-            ["age", "bmi", "smoker", "prediction", "model_used"]
-        ].copy()
+        recent = df.tail(10)[["age", "bmi", "smoker", "prediction", "model_used"]].copy()
         recent["prediction"] = recent["prediction"].apply(lambda x: f"${x:,.2f}")
         recent.columns = ["Age", "BMI", "Smoker", "Premium", "Model"]
         render_html_table(recent, numeric_cols=["Age", "BMI"])
@@ -3692,7 +3611,7 @@ def display_model_stats() -> None:
 
 @safe_display
 def display_export_options() -> None:
-    """Display export options (BUG-5 stable anchor fix retained from v3.5.6)."""
+    """Display export options ."""
     st.subheader("📤 Export")
     history = get_history()
 
@@ -3738,9 +3657,7 @@ def display_export_options() -> None:
     if len(history) > 1:
         st.markdown("---")
         export_limit = min(len(history), MAX_EXPORT_RECORDS)
-        st.markdown(
-            f"**History** ({len(history)} total, exporting last {export_limit})"
-        )
+        st.markdown(f"**History** ({len(history)} total, exporting last {export_limit})")
 
         if export_limit > EXPORT_WARNING_THRESHOLD:
             st.warning(f"⚠️ Exporting {export_limit} records")
@@ -3789,7 +3706,7 @@ def main() -> None:
     """Main application entry point."""
     try:
         _log_optional_deps_once()
-        # BUG-7 FIX: init_session_state() must precede apply_enhanced_ui() so
+        # init_session_state() must precede apply_enhanced_ui() so
         # dark_mode is guaranteed in session_state before CSS is generated.
         init_session_state()
         apply_enhanced_ui()
@@ -3852,7 +3769,7 @@ def main() -> None:
 
                         risk_color, risk_icon = risk_colors[risk_level]
 
-                        # THEME-2 FIX: replaced hardcoded `background: white`
+                        # replaced hardcoded `background: white`
                         # and `color: #4a5568` with CSS variables so the card
                         # renders correctly in dark mode.
                         st.markdown(
@@ -3880,9 +3797,7 @@ def main() -> None:
                             if last_pred.smoker == "yes":
                                 factors.append("• Smoking: +40 points")
                             if last_pred.bmi > BMI_OVERWEIGHT:
-                                factors.append(
-                                    f"• Obesity (BMI {last_pred.bmi:.1f}): +20 points"
-                                )
+                                factors.append(f"• Obesity (BMI {last_pred.bmi:.1f}): +20 points")
                             elif last_pred.bmi > BMI_NORMAL:
                                 factors.append(
                                     f"• Overweight (BMI {last_pred.bmi:.1f}): +10 points"
@@ -3943,9 +3858,7 @@ def main() -> None:
                 debug_info = {
                     "Version": APP_VERSION,
                     "History Size": len(history),
-                    "History Validated": st.session_state.get(
-                        "history_validated", False
-                    ),
+                    "History Validated": st.session_state.get("history_validated", False),
                     "Last Request Time (predict)": st.session_state.get(
                         "last_request_time_predict", 0
                     ),
@@ -3980,7 +3893,10 @@ def main() -> None:
         st.error("⚠️ Unexpected error occurred. Please refresh the page.")
         logger.critical(f"Critical error: {e}", exc_info=True)
 
-        if st.session_state.get("show_admin", False) and os.getenv("ADMIN_MODE", "").lower() == "true":
+        if (
+            st.session_state.get("show_admin", False)
+            and os.getenv("ADMIN_MODE", "").lower() == "true"
+        ):
             with st.expander("🔍 Error Details (Admin Only)"):
                 st.exception(e)
     finally:

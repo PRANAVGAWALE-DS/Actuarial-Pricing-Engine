@@ -46,16 +46,13 @@ Coverage:
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from insurance_ml.data import DataLoader, InsuranceInput
-
 
 # ===========================================================================
 # Helpers
@@ -302,29 +299,39 @@ def _set_insurance_input_config():
 @pytest.mark.unit
 class TestInsuranceInputAge:
     def test_valid_age(self) -> None:
-        rec = InsuranceInput(age=40, sex="male", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=40, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.age == 40
 
     def test_age_below_config_min_raises(self) -> None:
         # config age_min=0.0; no values below 0 accepted (age is int, 0 is boundary)
         # Testing that the validator fires — use a negative value
         with pytest.raises(ValidationError):
-            InsuranceInput(age=-1, sex="male", bmi=25.0, children=0, smoker="no", region="northeast")
+            InsuranceInput(
+                age=-1, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_age_above_config_max_raises(self) -> None:
         # config age_max=120; 121 should fail
         with pytest.raises(ValidationError):
-            InsuranceInput(age=121, sex="male", bmi=25.0, children=0, smoker="no", region="northeast")
+            InsuranceInput(
+                age=121, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_age_at_max_passes(self) -> None:
-        rec = InsuranceInput(age=120, sex="male", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=120, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.age == 120
 
 
 @pytest.mark.unit
 class TestInsuranceInputBmi:
     def test_valid_bmi(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=27.5, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=27.5, children=0, smoker="no", region="northeast"
+        )
         assert rec.bmi == 27.5
 
     def test_bmi_below_config_min_raises(self) -> None:
@@ -333,56 +340,78 @@ class TestInsuranceInputBmi:
 
     def test_bmi_above_config_max_raises(self) -> None:
         with pytest.raises(ValidationError):
-            InsuranceInput(age=35, sex="male", bmi=101.0, children=0, smoker="no", region="northeast")
+            InsuranceInput(
+                age=35, sex="male", bmi=101.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_bmi_at_max_passes(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=100.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=100.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.bmi == 100.0
 
 
 @pytest.mark.unit
 class TestInsuranceInputSex:
     def test_male_normalised_to_lowercase(self) -> None:
-        rec = InsuranceInput(age=35, sex="MALE", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="MALE", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.sex == "male"
 
     def test_female_normalised_to_lowercase(self) -> None:
-        rec = InsuranceInput(age=35, sex="Female", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="Female", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.sex == "female"
 
     def test_invalid_sex_raises(self) -> None:
         with pytest.raises(ValidationError, match="[Ss]ex"):
-            InsuranceInput(age=35, sex="unknown", bmi=25.0, children=0, smoker="no", region="northeast")
+            InsuranceInput(
+                age=35, sex="unknown", bmi=25.0, children=0, smoker="no", region="northeast"
+            )
 
     def test_whitespace_stripped(self) -> None:
-        rec = InsuranceInput(age=35, sex="  male  ", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="  male  ", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.sex == "male"
 
 
 @pytest.mark.unit
 class TestInsuranceInputSmoker:
     def test_yes_normalised(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="YES", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=25.0, children=0, smoker="YES", region="northeast"
+        )
         assert rec.smoker == "yes"
 
     def test_no_normalised(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="NO", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=25.0, children=0, smoker="NO", region="northeast"
+        )
         assert rec.smoker == "no"
 
     def test_invalid_smoker_raises(self) -> None:
         with pytest.raises(ValidationError, match="[Ss]moker"):
-            InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="maybe", region="northeast")
+            InsuranceInput(
+                age=35, sex="male", bmi=25.0, children=0, smoker="maybe", region="northeast"
+            )
 
 
 @pytest.mark.unit
 class TestInsuranceInputRegion:
     def test_valid_regions(self) -> None:
         for region in ["northeast", "northwest", "southeast", "southwest"]:
-            rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="no", region=region)
+            rec = InsuranceInput(
+                age=35, sex="male", bmi=25.0, children=0, smoker="no", region=region
+            )
             assert rec.region == region
 
     def test_region_normalised_to_lowercase(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="no", region="NORTHEAST")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=25.0, children=0, smoker="no", region="NORTHEAST"
+        )
         assert rec.region == "northeast"
 
     def test_invalid_region_raises(self) -> None:
@@ -393,20 +422,28 @@ class TestInsuranceInputRegion:
 @pytest.mark.unit
 class TestInsuranceInputChildren:
     def test_zero_children_passes(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=0, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=25.0, children=0, smoker="no", region="northeast"
+        )
         assert rec.children == 0
 
     def test_negative_children_raises(self) -> None:
         with pytest.raises(ValidationError):
-            InsuranceInput(age=35, sex="male", bmi=25.0, children=-1, smoker="no", region="northeast")
+            InsuranceInput(
+                age=35, sex="male", bmi=25.0, children=-1, smoker="no", region="northeast"
+            )
 
     def test_twenty_children_passes(self) -> None:
-        rec = InsuranceInput(age=35, sex="male", bmi=25.0, children=20, smoker="no", region="northeast")
+        rec = InsuranceInput(
+            age=35, sex="male", bmi=25.0, children=20, smoker="no", region="northeast"
+        )
         assert rec.children == 20
 
     def test_twenty_one_children_raises(self) -> None:
         with pytest.raises(ValidationError):
-            InsuranceInput(age=35, sex="male", bmi=25.0, children=21, smoker="no", region="northeast")
+            InsuranceInput(
+                age=35, sex="male", bmi=25.0, children=21, smoker="no", region="northeast"
+            )
 
 
 # ===========================================================================
@@ -454,7 +491,9 @@ class TestDataLoaderInit:
 
     def test_raises_when_total_split_too_large(self) -> None:
         """test_size + validation_size >= 0.9 must raise."""
-        cfg = _make_dataloader_config(test_size=0.45, include_validation_size=True, validation_size=0.45)
+        cfg = _make_dataloader_config(
+            test_size=0.45, include_validation_size=True, validation_size=0.45
+        )
         with pytest.raises(ValueError, match="split too large"):
             DataLoader(config=cfg)
 
@@ -508,8 +547,9 @@ class TestDataLoaderCleanData:
         df["extra_column"] = [1.0, float("nan"), 3.0, 4.0, 1.0]
         cleaned = loader.clean_data(df)
         # The extra_column NaN row should still be present (critical cols are fine)
-        assert float("nan") in cleaned["extra_column"].values or \
-               cleaned["extra_column"].isna().any()
+        assert (
+            float("nan") in cleaned["extra_column"].values or cleaned["extra_column"].isna().any()
+        )
 
     def test_raises_when_all_rows_removed(self) -> None:
         loader = self._loader()
@@ -523,7 +563,7 @@ class TestDataLoaderCleanData:
         loader = self._loader()
         df = _raw_df()
         original_len = len(df)
-        cleaned = loader.clean_data(df)
+        loader.clean_data(df)
         assert len(df) == original_len  # original unchanged
 
 
@@ -553,23 +593,41 @@ class TestDataLoaderValidateSingleRecord:
 
     def test_invalid_sex_raises(self) -> None:
         loader = self._loader()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             loader.validate_single_record(
-                {"age": 35, "sex": "alien", "bmi": 27.5, "children": 0, "smoker": "no", "region": "northeast"}
+                {
+                    "age": 35,
+                    "sex": "alien",
+                    "bmi": 27.5,
+                    "children": 0,
+                    "smoker": "no",
+                    "region": "northeast",
+                }
             )
 
     def test_invalid_region_raises(self) -> None:
         loader = self._loader()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             loader.validate_single_record(
-                {"age": 35, "sex": "male", "bmi": 27.5, "children": 0, "smoker": "no", "region": "mars"}
+                {
+                    "age": 35,
+                    "sex": "male",
+                    "bmi": 27.5,
+                    "children": 0,
+                    "smoker": "no",
+                    "region": "mars",
+                }
             )
 
     def test_normalises_values(self) -> None:
         loader = self._loader()
         record = {
-            "age": 35, "sex": "MALE", "bmi": 27.5, "children": 0,
-            "smoker": "NO", "region": "NORTHEAST",
+            "age": 35,
+            "sex": "MALE",
+            "bmi": 27.5,
+            "children": 0,
+            "smoker": "NO",
+            "region": "NORTHEAST",
         }
         validated = loader.validate_single_record(record)
         assert validated.sex == "male"

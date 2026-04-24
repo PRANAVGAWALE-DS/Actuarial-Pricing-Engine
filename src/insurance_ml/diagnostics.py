@@ -77,14 +77,14 @@ class ModelDiagnostics:
         ).sort_values("importance", ascending=False)
 
         logger.info(f"\n📊 TOP {top_n} FEATURES ({importance_source}):")
-        for idx, row in df.head(top_n).iterrows():
+        for _idx, row in df.head(top_n).iterrows():
             logger.info(f"   {row['feature']:<35} {row['importance']:.6f}")
 
         return df.head(top_n)
 
     @staticmethod
     def analyze_prediction_distribution(
-        y_true: np.ndarray, y_pred: np.ndarray, bins: list[float] = None
+        y_true: np.ndarray, y_pred: np.ndarray, bins: list[float] | None = None
     ) -> dict:
         """
         Analyze how predictions are distributed.
@@ -111,7 +111,7 @@ class ModelDiagnostics:
         # Residual analysis
         residuals = y_true - y_pred
 
-        logger.info(f"\n📊 RESIDUAL ANALYSIS:")
+        logger.info("\n📊 RESIDUAL ANALYSIS:")
         logger.info(f"   Mean Residual: ${np.mean(residuals):.2f}")
         logger.info(f"   Median Residual: ${np.median(residuals):.2f}")
         logger.info(f"   Std Residual: ${np.std(residuals):.2f}")
@@ -181,7 +181,7 @@ class ModelDiagnostics:
 
     @staticmethod
     def calculate_business_metrics(
-        y_true: np.ndarray, y_pred: np.ndarray, thresholds: list[float] = [0.05, 0.10, 0.15, 0.20]
+        y_true: np.ndarray, y_pred: np.ndarray, thresholds: list[float] | None = None
     ) -> dict:
         """
         Calculate business-relevant metrics.
@@ -194,6 +194,8 @@ class ModelDiagnostics:
         Returns:
             Dictionary with business metrics
         """
+        if thresholds is None:
+            thresholds = [0.05, 0.1, 0.15, 0.2]
         logger.info("\n💼 BUSINESS METRICS:")
 
         metrics = {}
@@ -230,7 +232,10 @@ class ModelDiagnostics:
 
     @staticmethod
     def error_by_range(
-        y_true: np.ndarray, y_pred: np.ndarray, bins: list[float] = None, labels: list[str] = None
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        bins: list[float] | None = None,
+        labels: list[str] | None = None,
     ) -> pd.DataFrame:
         """
         Calculate error metrics for different prediction ranges.
@@ -355,7 +360,7 @@ class CostWeightedMetrics:
 
     @staticmethod
     def tier_weights(
-        y_true: np.ndarray, bins: list[float] = None, weights: dict = None
+        y_true: np.ndarray, bins: list[float] | None = None, weights: dict | None = None
     ) -> np.ndarray:
         if bins is None:
             bins = [0.0, 5_000.0, 10_000.0, HIGH_VALUE_THRESHOLD, np.inf]  # 4-tier
@@ -367,7 +372,10 @@ class CostWeightedMetrics:
 
     @staticmethod
     def cost_weighted_r2(
-        y_true: np.ndarray, y_pred: np.ndarray, bins: list[float] = None, tier_weights: dict = None
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        bins: list[float] | None = None,
+        tier_weights: dict | None = None,
     ) -> float:
         """Weighted R² with revenue-proportional tier weights."""
         w = CostWeightedMetrics.tier_weights(y_true, bins, tier_weights)
@@ -381,7 +389,10 @@ class CostWeightedMetrics:
 
     @staticmethod
     def segment_r2_breakdown(
-        y_true: np.ndarray, y_pred: np.ndarray, bins: list[float] = None, labels: list[str] = None
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        bins: list[float] | None = None,
+        labels: list[str] | None = None,
     ) -> pd.DataFrame:
         """Per-segment R², RMSE, MAE, and overpricing rate."""
         from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -445,7 +456,7 @@ class DeploymentGates:
         critical = breakdown[breakdown["r2"] < 0.0]["segment"].tolist()
         warnings = breakdown[(breakdown["r2"] >= 0.0) & (breakdown["r2"] < 0.5)]["segment"].tolist()
 
-        # ── Issue 5 fix: hard veto — R² < -1.0 blocks deployment unconditionally ──
+        # hard veto — R² < -1.0 blocks deployment unconditionally ──
         # An aggregate G6 pass can mask a catastrophic segment (e.g. High R²=-2.016
         # when Very High R²=0.55 compensates in the weighted average). We veto the
         # gate if any individual segment R² drops below -1.0, i.e. the model's

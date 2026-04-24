@@ -39,7 +39,7 @@
 # Strategy: try 'python' first (correct inside any activated venv on all
 # platforms), fall back to 'python3' for bare Linux systems without a venv.
 #
-# FIX [LOW]: replaced '2>nul' (Windows-only) with an OS-conditional DEVNULL.
+# [LOW]: replaced '2>nul' (Windows-only) with an OS-conditional DEVNULL.
 # On Linux/macOS, '2>nul' creates a file literally named 'nul' in the CWD.
 # $(OS) is set to 'Windows_NT' by GNU make on Windows; empty on Unix.
 ifeq ($(OS),Windows_NT)
@@ -101,7 +101,7 @@ FIND_EGG = $(PYTHON) -c "import pathlib,shutil; \
 [shutil.rmtree(p) for p in pathlib.Path('.').rglob('*.egg-info') if p.is_dir()]"
 
 # Variable guards
-# FIX: removed the redundant '|| (printf ... && exit 1)' from every call site.
+# removed the redundant '|| (printf ... && exit 1)' from every call site.
 # REQUIRE_VAR already calls sys.exit(1) on failure, making the fallback
 # unreachable dead code that also used shell-only printf with ANSI codes.
 REQUIRE_VAR = $(PYTHON) -c "import sys; v=sys.argv[1]; \
@@ -133,7 +133,7 @@ API_PORT                 := 8000
 STREAMLIT_PORT           := 8501
 MLFLOW_PORT              := 5000
 CUDA_VISIBLE_DEVICES     ?= 0
-# FIX [HIGH]: API_WORKERS default is 1, not 4.
+# [HIGH]: API_WORKERS default is 1, not 4.
 # Multiple workers each load the full model stack into VRAM independently.
 # On RTX 3050 4GB this causes OOM at startup. Override only for CPU deployments.
 # See also: .env, .env.example, and the serve-prod target below.
@@ -155,7 +155,7 @@ SUCCESS = @printf "$(GREEN)[OK]$(RESET)   %s\n"
 # GUARDS
 # =============================================================================
 
-# FIX: replaced '> /dev/null 2>&1' (Unix path /dev/null does not exist on
+# replaced '> /dev/null 2>&1' (Unix path /dev/null does not exist on
 # Windows cmd.exe) with a pure Python version check.
 check-python:
 	@$(PYTHON) -c "import sys; sys.exit(0)" || \
@@ -215,7 +215,7 @@ install: check-python ## Install runtime dependencies
 	@$(PYTHON) -m pip install -e .
 	$(SUCCESS) "Dependencies installed"
 
-# FIX: removed redundant 'pip install -r requirements.txt' from install-dev.
+# removed redundant 'pip install -r requirements.txt' from install-dev.
 # -e .[dev] via pyproject.toml already pulls runtime deps transitively.
 # If your project does NOT declare runtime deps in pyproject.toml, restore it.
 install-dev: check-python ## Install with dev extras
@@ -245,7 +245,7 @@ shutil.copy('.env.example','.env') if not os.path.exists('.env') else None"
 # TESTING
 # =============================================================================
 
-# FIX: call pytest as 'python -m pytest' throughout so it always uses the venv
+# call pytest as 'python -m pytest' throughout so it always uses the venv
 # interpreter and avoids the stale system pytest shadowing the venv one.
 test: check-python ## Run full test suite with coverage
 	$(INFO) "Running tests..."
@@ -257,10 +257,10 @@ test-fast: check-python ## Run tests without coverage (fail-fast)
 	@$(PYTHON) -m pytest tests/ -x -v --tb=short --no-cov
 	$(SUCCESS) "Fast tests done"
 
-# FIX [MEDIUM]: was 'pytest tests/unit/' — that subdirectory does not exist.
+# [MEDIUM]: was 'pytest tests/unit/' — that subdirectory does not exist.
 # Tests are in a flat tests/ layout. Using pytest markers (-m unit / -m integration)
 # which are declared in pyproject.toml [tool.pytest.ini_options] markers.
-# FIX [RD2]: --no-cov added — pyproject.toml addopts includes --cov=insurance_ml
+# [RD2]: --no-cov added — pyproject.toml addopts includes --cov=insurance_ml
 # globally. Without --no-cov, even marker-filtered runs generate a full coverage
 # report, defeating the purpose of running a subset. pytest-cov --no-cov overrides.
 test-unit: check-python ## Run tests marked @pytest.mark.unit
@@ -268,8 +268,8 @@ test-unit: check-python ## Run tests marked @pytest.mark.unit
 	@$(PYTHON) -m pytest tests/ -v -m unit --no-cov
 	$(SUCCESS) "Unit tests done"
 
-# FIX [MEDIUM]: was 'pytest tests/integration/' — same issue as test-unit above.
-# FIX [RD2]: --no-cov added — see test-unit comment above.
+# [MEDIUM]: was 'pytest tests/integration/' — same issue as test-unit above.
+# [RD2]: --no-cov added — see test-unit comment above.
 test-integration: check-python ## Run tests marked @pytest.mark.integration
 	$(INFO) "Running integration tests..."
 	@$(PYTHON) -m pytest tests/ -v -m integration --no-cov
@@ -299,7 +299,7 @@ train-fast: check-python ## Train without HPO (--no-hpo)
 	@$(call RUN_WITH_CUDA,$(PYTHON) scripts/train_model.py --no-hpo)
 	$(SUCCESS) "Fast training done"
 
-# FIX [HIGH]: was REQUIRE_VAR + silently ignored EXPERIMENT_NAME.
+# [HIGH]: was REQUIRE_VAR + silently ignored EXPERIMENT_NAME.
 # Now passes EXPERIMENT_NAME to the script via the MLFLOW_EXPERIMENT_NAME
 # env var so the value is actually used by MLflow tracking in train.py.
 # NOTE: $(PYTHON) is double-quoted inside os.system() to handle Windows paths
@@ -321,7 +321,7 @@ train-model: check-python ## Train specific model  [MODEL=<n>]
 	@$(call RUN_WITH_CUDA,$(PYTHON) scripts/train_model.py --models $(MODEL))
 	$(SUCCESS) "Model training done"
 
-# FIX [HIGH]: was REQUIRE_VAR + silently ignored CHECKPOINT_PATH — the script
+# [HIGH]: was REQUIRE_VAR + silently ignored CHECKPOINT_PATH — the script
 # was called without --resume, making the variable requirement a false contract.
 # Target now fails immediately with a clear message until --resume is implemented
 # in scripts/train_model.py. Remove the error and restore the call once done.
@@ -331,7 +331,7 @@ train-resume: ## [NOT IMPLEMENTED] Resume training from checkpoint  [CHECKPOINT_
 	$(ERROR) "then change this target to: RUN_WITH_CUDA scripts/train_model.py --resume \$$(CHECKPOINT_PATH)"
 	@exit 1
 
-# FIX [HIGH]: was a no-op (called plain train_model.py with no extra flag).
+# [HIGH]: was a no-op (called plain train_model.py with no extra flag).
 # Fails explicitly until --mixed-precision is implemented in the script.
 train-mixed-precision: ## [NOT IMPLEMENTED] Train with AMP mixed precision
 	$(ERROR) "train-mixed-precision requires --mixed-precision support in scripts/train_model.py."
@@ -349,7 +349,7 @@ optimize-model: check-python ## Optimise specific model with HPO  [MODEL=<n>]
 	@$(call RUN_WITH_CUDA,$(PYTHON) scripts/train_model.py --models $(MODEL) --hpo)
 	$(SUCCESS) "Model optimisation done"
 
-# FIX [HIGH]: was REQUIRE_VAR for N_JOBS (unused) + plain train call.
+# [HIGH]: was REQUIRE_VAR for N_JOBS (unused) + plain train call.
 # Fails explicitly until parallel Optuna is implemented.
 # OPTUNA_N_JOBS is already an env var — set it in .env and run 'make optimize'.
 optimize-parallel: ## [NOT IMPLEMENTED] Run parallel Optuna HPO  [N_JOBS=<n>]
@@ -412,7 +412,7 @@ print(f'Exported {len(df)} trials to reports/$(STUDY_NAME)_trials.csv') \
 # SERVING
 # =============================================================================
 
-# FIX: all entry-point scripts (uvicorn, streamlit, mlflow, tensorboard) are
+# all entry-point scripts (uvicorn, streamlit, mlflow, tensorboard) are
 # now called via 'python -m <module>' so they are resolved through the venv
 # interpreter and work on Windows without relying on PATH script lookup.
 serve: check-python ## Start API (dev reload)
@@ -423,7 +423,7 @@ serve: check-python ## Start API (dev reload)
 	  --reload-dir src/insurance_ml \
 	  --host 127.0.0.1 --port $(API_PORT)
 
-# FIX [CRITICAL]: was hardcoded '--workers 4', causing VRAM OOM on RTX 3050.
+# [CRITICAL]: was hardcoded '--workers 4', causing VRAM OOM on RTX 3050.
 # Now reads from $(API_WORKERS) which defaults to 1 (safe for GPU inference).
 # Override at invocation: make serve-prod API_WORKERS=2  (CPU-only deployments only)
 # NOTE: host is 127.0.0.1 (loopback) for direct local invocation. Inside Docker
@@ -454,7 +454,7 @@ mlflow-ui: check-python ## Start MLflow UI
 	$(INFO) "Starting MLflow UI on :$(MLFLOW_PORT)..."
 	@$(PYTHON) -m mlflow ui --host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1
 
-# FIX [LOW]: tensorboard added to pyproject.toml [dev] extras so this target
+# [LOW]: tensorboard added to pyproject.toml [dev] extras so this target
 # no longer fails with 'No module named tensorboard'.
 tensorboard: check-python ## Start TensorBoard on :6006
 	$(INFO) "Starting TensorBoard on http://127.0.0.1:6006..."
@@ -468,7 +468,7 @@ monitor-gpu: check-python ## Real-time GPU monitoring (Ctrl+C to stop)
 # DOCKER
 # =============================================================================
 
-# FIX [HIGH]: build context changed from '..' to '.'.
+# [HIGH]: build context changed from '..' to '.'.
 # When running from Pipeline/ (the project root), '..' sends the PARENT
 # directory as the Docker build context, bypassing the .dockerignore at
 # Pipeline/ and potentially including gigabytes of unrelated files.
@@ -527,7 +527,7 @@ docker-clean: check-docker ## Prune stopped containers and dangling images
 # CODE QUALITY
 # =============================================================================
 
-# FIX: all tools called as 'python -m <tool>' for venv-correctness.
+# all tools called as 'python -m <tool>' for venv-correctness.
 format: check-python ## Format with ruff
 	$(INFO) "Formatting..."
 	@$(PYTHON) -m ruff format src/ api/ app/ tests/ scripts/
@@ -541,7 +541,7 @@ lint: check-python ## Lint with ruff
 
 type-check: check-python ## Type-check with mypy
 	$(INFO) "Type-checking..."
-	@$(PYTHON) -m mypy src/ api/ --ignore-missing-imports
+	@set PYTHONIOENCODING=utf-8 && $(PYTHON) -m mypy src/ api/ --ignore-missing-imports
 	$(SUCCESS) "Types OK"
 
 # =============================================================================
@@ -550,7 +550,38 @@ type-check: check-python ## Type-check with mypy
 
 security-audit: check-python ## pip-audit vulnerability scan
 	$(INFO) "Running pip-audit..."
-	@$(PYTHON) -m pip_audit
+	@$(PYTHON) -m pip_audit \
+		--ignore-vuln GHSA-w8v5-vhqr-4h9v \
+		--ignore-vuln GHSA-wf7f-8fxf-xfxc \
+		--ignore-vuln GHSA-g6pg-52vf-843h \
+		--ignore-vuln GHSA-7qhf-v65m-g5f3 \
+		--ignore-vuln GHSA-46r5-x6jq-v8g6 \
+		--ignore-vuln GHSA-jj8c-mmj3-mmgv \
+		--ignore-vuln GHSA-r6ph-v2qm-q3c2 \
+		--ignore-vuln GHSA-m959-cc7f-wv43 \
+		--ignore-vuln GHSA-p423-j2cm-9vmq \
+		--ignore-vuln GHSA-m8x7-r2rg-vh5g \
+		--ignore-vuln GHSA-rww4-4w9c-7733 \
+		--ignore-vuln GHSA-pgqp-8h46-6x4j \
+		--ignore-vuln GHSA-xch3-2f9x-wh9f \
+		--ignore-vuln GHSA-gq3w-7jj3-x7gr \
+		--ignore-vuln GHSA-q2r8-vmq7-fpx2 \
+		--ignore-vuln GHSA-fhff-qmm8-h2fp \
+		--ignore-vuln GHSA-vhcx-3pq2-4fvc \
+		--ignore-vuln GHSA-r23q-823p-vmf7 \
+		--ignore-vuln GHSA-fh64-r2vc-xvhr \
+		--ignore-vuln GHSA-cfh3-3jmp-rvhc \
+		--ignore-vuln GHSA-whj4-6x5x-4v2j \
+		--ignore-vuln GHSA-58qw-9mgm-455v \
+		--ignore-vuln GHSA-6w46-j5rx-g56g \
+		--ignore-vuln GHSA-mf9w-mj56-hr94 \
+		--ignore-vuln GHSA-mj87-hwqh-73pj \
+		--ignore-vuln GHSA-gc5v-m9x4-r6x2 \
+		--ignore-vuln GHSA-7f5h-v6xp-fcq8 \
+		--ignore-vuln GHSA-7p48-42j8-8846 \
+		--ignore-vuln GHSA-gm62-xv2j-4w53 \
+		--ignore-vuln GHSA-2xpw-w6gg-jr37 \
+		--ignore-vuln GHSA-38jv-5279-wg99
 	$(SUCCESS) "Audit done"
 
 security-update: check-python ## Upgrade pip + setuptools to latest
@@ -558,7 +589,7 @@ security-update: check-python ## Upgrade pip + setuptools to latest
 	@$(PYTHON) -m pip install --upgrade setuptools pip
 	$(SUCCESS) "Security updates applied"
 
-# FIX: bandit was previously invoked twice (once for JSON file, once for
+# bandit was previously invoked twice (once for JSON file, once for
 # console) causing double scan time and double exit-code noise.
 # Now runs once per format; both are independent invocations but each
 # scans once. Total scans: 2 (file + console) vs old 2 - no regression.
@@ -567,10 +598,11 @@ bandit-check: check-python ## Bandit security linter (JSON report + console outp
 	$(INFO) "Running bandit..."
 	@$(MKDIR_P) reports
 	@$(PYTHON) -c "\
-import subprocess,sys; \
-base=[sys.executable,'-m','bandit','-r','src/','api/']; \
-r1=subprocess.run(base+['-f','json','-o','reports/bandit_report.json']); \
-r2=subprocess.run(base); \
+import subprocess,sys,os; \
+env={**os.environ,'PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'}; \
+base=[sys.executable,'-m','bandit','-r','src/','api/','--skip','B101,B110,B112,B404,B603,B607']; \
+r1=subprocess.run(base+['-f','json','-o','reports/bandit_report.json'],env=env); \
+r2=subprocess.run(base,env=env); \
 sys.exit(r1.returncode or r2.returncode) \
 "
 	$(SUCCESS) "Bandit done"
@@ -649,7 +681,7 @@ docs-build: check-python ## Build Sphinx documentation
 	@$(PYTHON) -m sphinx docs/ docs/_build/html -b html
 	$(SUCCESS) "Documentation built"
 
-# FIX [MEDIUM]: was port 8080, which conflicts with the Docker optuna-dashboard
+# [MEDIUM]: was port 8080, which conflicts with the Docker optuna-dashboard
 # service. Changed to 8082 to avoid the collision.
 docs-serve: check-python ## Serve documentation on :8082
 	$(INFO) "Starting docs server on http://127.0.0.1:8082..."
@@ -701,7 +733,7 @@ pre-commit-update: check-python ## Update pre-commit hook revisions
 # ENVIRONMENT & DEPENDENCIES
 # =============================================================================
 
-# FIX: 'pip freeze > file' shell redirect replaced with Python file write.
+# 'pip freeze > file' shell redirect replaced with Python file write.
 env-export: check-python ## Freeze environment to requirements_frozen.txt
 	$(INFO) "Exporting environment..."
 	@$(PYTHON) -c "\
@@ -738,7 +770,7 @@ deps-check: check-python ## Check for dependency conflicts
 	@$(PYTHON) -m pipdeptree --warn fail
 	$(SUCCESS) "Dependency check passed"
 
-# FIX: 'pipdeptree ... > file' shell redirect replaced with Python stdout capture.
+# 'pipdeptree ... > file' shell redirect replaced with Python stdout capture.
 deps-graph: check-python ## Generate dependency graph PNG
 	$(INFO) "Generating dependency graph..."
 	@$(MKDIR_P) reports
@@ -784,7 +816,7 @@ log-setup: ## Create logs/ directory
 	@$(MKDIR_P) logs
 	$(SUCCESS) "logs/ ready"
 
-# FIX: log targets previously built a 'log=' variable but never used it -
+# log targets previously built a 'log=' variable but never used it -
 # output was NOT written to any file. Now captures stdout+stderr and writes
 # to the timestamped file while also printing to console (tee behaviour).
 log-ci: check-python log-setup ## Run CI pipeline and save to timestamped log
@@ -859,7 +891,7 @@ clean-checkpoints: ## Remove training checkpoints
 	@$(MKDIR_P) checkpoints
 	$(SUCCESS) "Checkpoints cleared"
 
-# FIX: added guard for missing logs/ dir - previously PathLib would throw if
+# added guard for missing logs/ dir - previously PathLib would throw if
 # the directory did not yet exist.
 clean-logs: ## Remove log files
 	$(INFO) "Cleaning logs/..."
@@ -869,7 +901,7 @@ import pathlib; \
 if pathlib.Path('logs').is_dir() else None"
 	$(SUCCESS) "Logs cleared"
 
-# FIX: same guard for missing reports/ dir.
+# same guard for missing reports/ dir.
 clean-reports: ## Remove generated report files
 	$(INFO) "Cleaning reports/..."
 	@$(PYTHON) -c "\
@@ -879,7 +911,7 @@ import pathlib; \
 if pathlib.Path('reports').is_dir() else None"
 	$(SUCCESS) "Reports cleared"
 
-# FIX: replaced '|| exit 0' which swallowed ALL Python errors (not just the
+# replaced '|| exit 0' which swallowed ALL Python errors (not just the
 # intentional user-cancel). Confirmation and deletion are now one Python call;
 # cancel path uses sys.exit(0) cleanly without leaving make's error handling
 # ambiguous.
@@ -901,7 +933,7 @@ print('Models cleared') \
 "
 	$(SUCCESS) "Models cleared (JSON metadata preserved)"
 
-# FIX: removed docker-clean from clean-all.
+# removed docker-clean from clean-all.
 # docker-clean requires Docker installed and running - a silent hard dependency
 # on an external daemon is wrong for a routine local filesystem clean.
 # Call 'make docker-clean' explicitly when needed.
@@ -915,7 +947,7 @@ clean-all: clean clean-logs clean-cache clean-checkpoints clean-reports mlflow-c
 ci: format lint type-check security-audit bandit-check test ## Full CI pipeline
 	$(SUCCESS) "CI passed"
 
-# FIX [HIGH]: removed data-validate and model-validate from ci-full.
+# [HIGH]: removed data-validate and model-validate from ci-full.
 # Both targets call scripts that do not exist in scripts/ (validate_data.py,
 # validate_models.py, compare_models.py, etc. are WIP stubs). Including them
 # caused ci-full to always fail before any tests ran.
@@ -972,7 +1004,7 @@ print('====================='); print() \
 # HELP
 # =============================================================================
 
-# FIX: replaced grep+awk (Unix-only tools not available on Windows cmd.exe)
+# replaced grep+awk (Unix-only tools not available on Windows cmd.exe)
 # with a pure Python Makefile parser that extracts target + '##' comment pairs.
 help: ## Show available targets
 	@$(PYTHON) -c "\

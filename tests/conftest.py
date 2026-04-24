@@ -21,7 +21,6 @@ import pandas as pd
 import pytest
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Minimal valid config dict
 # ---------------------------------------------------------------------------
@@ -384,6 +383,7 @@ def minimal_config() -> dict[str, Any]:
 def mutable_config() -> dict[str, Any]:
     """Fresh copy of minimal_config for tests that mutate it."""
     import copy
+
     return copy.deepcopy(make_minimal_config())
 
 
@@ -436,8 +436,8 @@ def large_sample_df() -> pd.DataFrame:
     regions = ["northeast", "northwest", "southeast", "southwest"]
     charges = np.concatenate(
         [
-            rng.uniform(500.0, 4500.0, 50),    # low_risk  (< $4,500)
-            rng.uniform(4501.0, 15000.0, 80),   # standard
+            rng.uniform(500.0, 4500.0, 50),  # low_risk  (< $4,500)
+            rng.uniform(4501.0, 15000.0, 80),  # standard
             rng.uniform(15001.0, 30000.0, 40),  # high_risk
             rng.uniform(30001.0, 70000.0, 30),  # catastrophic
         ]
@@ -465,6 +465,7 @@ def large_sample_df() -> pd.DataFrame:
 def bc_2tier():
     """Standard 2-tier BiasCorrection instance."""
     from insurance_ml.features import BiasCorrection
+
     return BiasCorrection(var_low=0.04, var_high=0.09, threshold=15_000.0)
 
 
@@ -472,6 +473,7 @@ def bc_2tier():
 def bc_3tier():
     """Standard 3-tier BiasCorrection instance."""
     from insurance_ml.features import BiasCorrection
+
     return BiasCorrection(
         var_low=0.04,
         var_high=0.09,
@@ -511,4 +513,5 @@ def drift_baseline_path(tmp_path: Path, sample_df: pd.DataFrame) -> Path:
 def fresh_metrics():
     """Return a new MetricsCollector with sentinel startup_time."""
     from api.routes import MetricsCollector
+
     return MetricsCollector()

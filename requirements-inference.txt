@@ -22,14 +22,14 @@
 #   pip install torch==2.6.0  # from PyPI
 #   pip install -r requirements-inference.txt
 #
-# FIX [MEDIUM]: This file is now wired into the Dockerfile builder stage.
+# [MEDIUM]: This file is now wired into the Dockerfile builder stage.
 #   docker/Dockerfile builder stage:
 #     COPY requirements-inference.txt /tmp/requirements.txt
 #     RUN pip install --no-cache-dir -r /tmp/requirements.txt
 #   Previously the Dockerfile still used requirements.txt, making this file
 #   dead configuration. See docker/Dockerfile for the corrected COPY line.
 #
-# FIX [HIGH]: Added matplotlib==3.10.6.
+# [HIGH]: Added matplotlib==3.10.6.
 #   shap==0.48.0 is listed below and used for inference-time explanations.
 #   SHAP's plot functions (shap.plots.*, force_plot, waterfall_plot) have a
 #   hard import-time dependency on matplotlib. Without it the inference
@@ -65,7 +65,7 @@ plotly==6.3.0
 rich==14.1.0
 
 # ── Visualization (required by shap) ─────────────────────────────────────────
-# FIX [HIGH]: matplotlib added — shap has a hard import-time dependency on it.
+# [HIGH]: matplotlib added — shap has a hard import-time dependency on it.
 # seaborn intentionally excluded: not used by inference paths.
 matplotlib==3.10.6
 

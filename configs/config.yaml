@@ -19,12 +19,12 @@ environment: production
 # PREDICTION CONFIGURATION
 # ====================================================
 prediction:
-  # T3-C (v7.5.0): max batch size is now config-driven.
+  # max batch size is now config-driven.
   # PredictionPipeline.predict() and HybridPredictor.predict() both read this key.
   # Default 10,000 is appropriate for interactive/API use.
   # Raise for portfolio re-pricing runs (e.g. 50,000+ at renewal).
   # Each prediction requires ~6KB RAM; 50K policies ≈ 300MB — safe on 16GB.
-  # v7.5.0→50k: raised from 10000 to match full portfolio size.
+  # raised from 10000 to match full portfolio size.
   max_batch_size: 50000
   # Threshold above which predict_single() emits a high-prediction warning.
   # Aligns with actuarial upper bound for individual policy pricing.
@@ -70,7 +70,7 @@ cross_validation:
 gpu:
   enabled: true
   device_id: 0
-  # FIX U-14: memory_limit_mb is actively used by ModelManager but is never
+  # memory_limit_mb is actively used by ModelManager but is never
   # validated against hardware.total_vram_mb (4096 MB) at startup.  Setting
   # this above total_vram_mb silently overcommits VRAM and causes OOM crashes.
   # RULE: memory_limit_mb MUST be ≤ hardware.total_vram_mb (4096).
@@ -94,10 +94,10 @@ gpu:
                                 # means more histogram nodes benefit from cache. 1024 was right-sized
                                 # for max_leaves≤25 on ~1300 samples; 4096 covers 50k histogram depth.
 
-  # ── NEW (v7.5.0): Pricing model — symmetric squared-error ─────────────────
+  # Pricing model — symmetric squared-error ─────────────────
   xgboost_median:
-    device: cuda:0              # v7.5.2: added. Missing key caused ~250 redundant log msgs/run.
-    tree_method: hist           # v7.5.5 PATCH-C: explicit GPU histogram.
+    device: cuda:0              # added. Missing key caused ~250 redundant log msgs/run.
+    tree_method: hist           # explicit GPU histogram.
                                 # Without this, XGBoost silently falls back to CPU on large
                                 # datasets (observed: GPU memory -7MB instead of +N MB at fold 0).
                                 # Must match gpu.xgboost.tree_method to keep both models on GPU.
@@ -110,7 +110,7 @@ gpu:
     max_depth: 6
     subsample: 0.8
     colsample_bytree: 0.8
-    min_child_weight: 50      # 50k-scale: raised from 5. At 1300 samples MCW=5 ≈ 0.4% of data.
+    min_child_weight: 50      # raised from 5. At 1300 samples MCW=5 ≈ 0.4% of data.
                               # At 50k MCW=5 ≈ 0.01% — near-zero regularization. 50 ≈ 0.1% of 50k train set.
     reg_alpha: 0.1
     reg_lambda: 1.0
@@ -154,15 +154,15 @@ data:
 features:
   bmi_min: 10.0
   bmi_max: 100.0
-  # M-04 FIX: raised from 0.0 to 18.0.
+  # raised from 0.0 to 18.0.
   # The API enforces age >= 18 (schemas.py PredictRequest ge=18) for policy-holders.
   # With age_min=0.0 any tool calling PredictionPipeline or HybridPredictor directly
   # (notebooks, scripts, evaluate.py) bypassed the age floor entirely — a child-age
   # prediction would silently produce a premium.  Both layers now agree on 18.
   age_min: 18.0
   age_max: 120.0
-  children_min: 0    # F-08: lower bound for children validation
-  children_max: 20   # F-08: upper bound for children validation
+  children_min: 0    # lower bound for children validation
+  children_max: 20   # upper bound for children validation
 
   categorical_features: [sex, smoker, region]
   numerical_features: [age, bmi, children]
@@ -223,7 +223,7 @@ features:
   collinearity_removal:
     enabled: true
     threshold: 0.90
-    vif_threshold: 10.0  # v7.5.2: raised from 5.0. The $14K-$16.7K zone (High+ segment)
+    vif_threshold: 10.0  # raised from 5.0. The $14K-$16.7K zone (High+ segment)
                          # has R²=-29.83 because VIF=5.0 removed smoker_bmi_squared (VIF=7.8)
                          # and chronic_condition_proxy (VIF=6.0) — the only features that
                          # distinguish smoker vs non-smoker populations producing similar
@@ -251,14 +251,14 @@ sample_weights:
     q25_to_q50: 1.0
     q50_to_q75: 1.05
     q75_to_q90: 1.15
-    # ISSUE 5 FIX: High-value segment R²=0.605 vs overall 0.918 — model severely
+    # High-value segment R²=0.605 vs overall 0.918 — model severely
     # under-attends to the expensive tail. Previous top-tier weights (1.30/1.40/1.50)
     # were insufficient: best trial barely moved predictions toward high-cost cases.
     # Increased top three tiers to push training loss toward tail accuracy.
     # max_weight=2.0 cap (below) prevents any single sample dominating gradients.
     q90_to_q95: 1.50   # was 1.30
     q95_to_q99: 1.70   # was 1.40
-    # FIX M5: restored to 2.00 (was incorrectly reduced to 1.50 in v7.5.2).
+    # restored to 2.00 (was incorrectly reduced to 1.50 in v7.5.2).
     # above_q99=1.50 was LOWER than q95_to_q99=1.70, creating a non-monotonic
     # weight profile where the costliest 1% of policies received LESS training
     # emphasis than the tier immediately below them.  The original rationale
@@ -288,7 +288,7 @@ model:
   metric_mapping:
     sklearn: neg_root_mean_squared_error
     xgboost: quantile                # matches objective: "reg:quantileerror"
-    # FIX F-15: xgboost_median was absent — optuna_optimizer.py metric lookup
+    # xgboost_median was absent — optuna_optimizer.py metric lookup
     # fell back to an undefined default when building the study for this model.
     # reg:squarederror (symmetric RMSE) → rmse is the correct Optuna metric.
     xgboost_median: rmse             # matches objective: "reg:squarederror"
@@ -350,10 +350,10 @@ models:
     # 'alpha' here is L1 regularization strength, NOT the quantile level.
     # 'quantile' is the target percentile (0.60 = 60th percentile, matches LightGBM/XGB).
     fit_intercept: true
-    max_iter: 50000  # v7.5.4: raised from 10000 — ConvergenceWarning on 20+ folds
+    max_iter: 50000  # raised from 10000 — ConvergenceWarning on 20+ folds
     # random_state intentionally omitted — QuantileRegressor has no such parameter
 
-    quantile: 0.60              # target quantile level (fixed; not tuned by Optuna)
+    quantile: 0.60              # target quantile level (not tuned by Optuna)
 
     alpha:                      # L1 regularization strength (Optuna tunes this)
       type: float
@@ -424,8 +424,8 @@ models:
       low: 0.0
       high: 0.1
 
-    # alpha controls the quantile level when loss="quantile" (was for huber: 0.8–0.95)
-    # Fixed constant (v7.4.3) — NOT a search range. Optuna must not tune this.
+    # alpha controls the quantile level when loss="quantile" 
+    # NOT a search range. Optuna must not tune this.
     alpha: 0.65
 
   # ====================================================
@@ -621,7 +621,7 @@ models:
     verbose: -1
     force_col_wise: true
     objective: quantile              # quantile (pinball) loss
-    alpha: 0.65                      # FIXED quantile level (v7.4.3) — Optuna does NOT tune this.
+    alpha: 0.65                      # — Optuna does NOT tune this.
                                      # Was tunable [0.58,0.70] but RMSE objective always pulled it
                                      # to the floor, effectively reverting to near-median loss.
 
@@ -753,7 +753,7 @@ models:
 # ====================================================
 optuna:
   enabled: true
-  # M-03 FIX: raised from 1 to 50.
+  # raised from 1 to 50.
   # With n_trials=1 and n_startup_trials=10, TPE never activated — Optuna ran
   # exactly one random-sample trial and returned the default hyperparameters.
   # n_trials MUST exceed n_startup_trials for TPE to have any budget.
@@ -798,7 +798,7 @@ optuna:
     weighted:
       high_value_multiplier: 1.5
       threshold_percentile: 75.0
-      very_high_percentile: 90.0   # FIX NEW-B: was 5.0 (5th percentile = cheapest policies!).
+      very_high_percentile: 90.0   # was 5.0 (5th percentile = cheapest policies!).
       # 90.0 → top 10% of policies receive the 2.7× boost weight as intended.
       # At 5.0 the very_high tier covered 95% of portfolio, collapsing into uniform RMSE.
       very_high_penalty_boost: 1.8
@@ -823,12 +823,12 @@ optuna:
 
   pruner:
     type: median
-    n_startup_trials: 10   # v7.4.5-fix5: was 20. MedianPruner skips ALL trials below this
+    n_startup_trials: 10   # MedianPruner skips ALL trials below this
                            # count entirely. At 20, 20% of the 100-trial budget ran without
                            # any pruning protection, and the remaining 80 trials only had
                            # the n_warmup_steps window. Reducing to 10 allows the pruner
                            # to start cutting bad trials earlier in the study.
-    n_warmup_steps: 1      # v7.4.5-fix5: was 3. With 5 folds (steps 0-4), n_warmup_steps=3
+    n_warmup_steps: 1      # With 5 folds (steps 0-4), n_warmup_steps=3
                            # meant the pruner could only fire at steps 3 or 4. Observed
                            # "Avg pruning at: Fold 5.0/5" confirmed it never fired before
                            # the final fold — zero compute was saved across all 22 pruned
@@ -849,7 +849,7 @@ optuna:
 
   overfitting:
     penalty_enabled: true
-    # v7.4.5-fix4 RECALIBRATION: old values (warning=6, critical=12, mult=6.0)
+    # RECALIBRATION: old values (warning=6, critical=12, mult=6.0)
     # were designed for dollar-space RMSE. Pinball loss in Yeo-Johnson space
     # sits ~0.20-0.25; a 6-12% gap there is normal generalization noise, NOT
     # overfitting. Old warning-tier (3.5x) inflated 0.22 -> 0.77 on ~25% of
@@ -938,14 +938,14 @@ optuna:
       max_depth: [3, 5]
       learning_rate: [0.04, 0.10]
 
-      # ISSUE 4b FIX (retained): Best trial (trial 45) used reg_alpha=1.58,
+      # (retained): Best trial (trial 45) used reg_alpha=1.58,
       # reg_lambda=4.76 — all near the previous lower bounds. Floors raised
       # on leaf-weight regularization (reg_alpha, reg_lambda) to push Optuna
       # away from the under-regularized regime that caused 7.4% pinball gap.
       reg_alpha: [2.0, 8.0]
       reg_lambda: [3.0, 12.0]
 
-      # NEW ISSUE B FIX: gamma and min_child_weight control split complexity
+      # gamma and min_child_weight control split complexity
       # directly. In the previous run both were raised simultaneously with
       # reg_alpha/reg_lambda, reducing model capacity enough to hurt the
       # high-value segment (R² 0.605 → 0.5385) because the extreme
@@ -970,15 +970,15 @@ optuna:
       # incompatible with reg:quantileerror. Removed from config.py validator (required_xgb
       # in get_optuna_config) so it no longer needs to appear here. Keeping it would
       # cause Optuna to waste a search dimension suggesting a value XGBoost ignores.
-      # FIX-2 (v7.4.4): was [0, 0] — XGBoost reg:quantileerror REQUIRES max_delta_step > 0.
+      # (v7.4.4): was [0, 0] — XGBoost reg:quantileerror REQUIRES max_delta_step > 0.
       # Value 0 disables the gradient-step constraint, causing NaN predictions / ValueError
       # on every trial (silently swallowed by the old exception handler → all trials pruned).
       # Range [1, 3]: 1 is XGBoost default; 3 allows mild upward tuning for stability.
       max_delta_step: [1, 3]
 
-    # FIX-1b: xgboost_median pricing model (reg:squarederror, symmetric loss).
+    # xgboost_median pricing model (reg:squarederror, symmetric loss).
     # Required so OptunaOptimizer._suggest_constrained_params() finds a param
-    # block for this model name. Without this block, is_tree_model=True (Fix 1a)
+    # block for this model name. Without this block, is_tree_model=True
     # routes to the constrained path but model_config is empty → zero params →
     # all 50 trials identical → 550% train/val RMSE overfitting gap.
     #
@@ -1011,7 +1011,7 @@ optuna:
       max_depth: [4, 8]
       learning_rate: [0.01, 0.1]
       num_leaves: [64, 256]         # 50k-scale: raised from [48,160]. 2^8=256 leaves is safe with 50k+ samples.
-      # FIX-3 (v7.4.4): min_child_samples REMOVED — it is a LightGBM alias for
+      # min_child_samples REMOVED — it is a LightGBM alias for
       # min_data_in_leaf. Passing both to LGBMRegressor(**params) raises
       # LightGBMError "Found duplicated parameter: min_data_in_leaf" on every
       # trial, crashing silently as TrialPruned under the old exception handler.
@@ -1150,7 +1150,7 @@ training:
 
   deployment_gates:
     g6_min_cost_weighted_r2: 0.75
-    # BUG-6 FIX: raised from 0.55 → 0.62 for reg:squarederror (xgboost_median).
+    # raised from 0.55 → 0.62 for reg:squarederror (xgboost_median).
     # Mean > median for right-skewed insurance charges (mean/median ≈ 1.40×), so
     # a perfectly fitted squarederror model has >50% overpricing by design.
     # 55% is structurally unreachable without aggressive Low-tier bias correction
@@ -1294,7 +1294,7 @@ overfitting_analysis:
 # MONITORING & OBSERVABILITY
 # ====================================================
 monitoring:
-  # canonical key read by predict.py (dual-key fallback added in config compat fix)
+  # canonical key read by predict.py (dual-key fallback added in config compat)
   drift_detection: true
   # legacy alias — kept for backward compat with older predict.py versions
   drift_detection_enabled: true
@@ -1367,7 +1367,7 @@ hybrid_predictor:
   # 1.15 matches the actuarial conservativeness alert threshold already used in
   # predict() diagnostics (actuarial_vs_ml_ratio > 1.15).
   #
-  # C-01 FIX: restored to 1.15 (documented intent and predict.py default).
+  # restored to 1.15 (documented intent and predict.py default).
   # Previous value of 1.45 made the cap effectively inactive for the $7,500–$18,037
   # transition zone (actuarial over-prices ~20–30% there), directly causing the
   # observed 6.44% churn rate (vs ML baseline 3.95%).  The cap comment explicitly
@@ -1378,7 +1378,7 @@ hybrid_predictor:
   #   Relax  to 1.20 if actuarial corrections for high-risk policies are clipped too aggressively.
   max_actuarial_uplift_ratio: 1.10
 
-  # T2-B (v7.5.0): ML-relative floor guard — symmetric counterpart to the
+  # ML-relative floor guard — symmetric counterpart to the
   # churn cap above.  When the actuarial formula systematically under-prices a
   # segment (VH at 0.608x ML confirmed by notebook 05_vh_analysis.ipynb), the
   # blend can be dragged below ML with no lower bound.  This guard prevents the
@@ -1412,7 +1412,7 @@ hybrid_predictor:
   # ====================================================
   calibration:
     enabled: true
-    # FIX-4 (v7.5.0-patch5b): per-model calibration factors.
+    # per-model calibration factors.
     #
     # Previous single factor=1.02 caused G7 failures on both models:
     #   Pricing model (squarederror): raw ~50% overpricing x1.02 = ~77%  [G7 >55% FAIL]
@@ -1461,7 +1461,7 @@ hybrid_predictor:
     customer_acquisition_cost: 200.0  # $200 CAC
     customer_lifetime_value_multiplier: 1.5  # CLV = 1.5x annual premium
 
-    # ✅ CRITICAL: Must match evaluation.cost_analysis.asymmetric_penalties.underpricing_multiplier
+    # Must match evaluation.cost_analysis.asymmetric_penalties.underpricing_multiplier
     underpricing_penalty_multiplier: 0.3  # 30% of underpricing amount
     underpricing_penalty_cap_pct: 0.2  # Never exceed 20% of premium
     severe_underpricing_threshold_pct: 0.50  # >50% underpricing is severe
@@ -1475,13 +1475,13 @@ hybrid_predictor:
     low_value_threshold: 4500.0  # Threshold for low-value segment
     high_value_multiplier: 1.5  # Multiplier for high-value policies
 
-    # FIX F-12: BizScore scoring thresholds for _calculate_business_value_score().
+    # BizScore scoring thresholds for _calculate_business_value_score().
     # Previously these were Python-only dataclass defaults in evaluate.py
     # BusinessConfig — invisible to config.yaml governance and untunable without
     # a code edit.  Now declared here so operators can tune them without deploys.
     # evaluate.py BusinessConfig.from_config_dict() reads these via .get() with
     # the same values as fallback — fully backward compatible.
-    # FIX: raised from 500.0 → 600.0 to calibrate against the actual 50k-portfolio
+    # raised from 500.0 → 600.0 to calibrate against the actual 50k-portfolio
     # ML baseline ($615/policy).  At 500.0 both ML ($615) and hybrid ($677) exceeded
     # the target identically, making the $62/policy profit difference invisible to
     # the gate (both scored 50/50 on profitability).
@@ -1498,7 +1498,7 @@ hybrid_predictor:
     biz_score_retention_max: 30.0     # max retention component (out of 100)
     biz_score_quality_weight: 20.0    # accuracy-rate multiplier (out of 100)
 
-    # M-07 FIX: governance bounds for the combined correction factor.
+    # governance bounds for the combined correction factor.
     # HybridPredictor.predict() validates that
     #   median(hybrid_predictions / raw_ml_predictions)
     # stays within [combined_correction_min, combined_correction_max].
@@ -1543,7 +1543,7 @@ hybrid_predictor:
     track_blend_distribution: true  # Track usage of each component
     log_calibration_applied: true  # Track calibration effects
 
-    # ✅ ENHANCED: Track new evaluation metrics
+    # ENHANCED: Track new evaluation metrics
     track_smape: true  # Track SMAPE metric
     track_male: true   # Track MALE metric
     track_segment_metrics: true  # Track segment-level performance
@@ -1557,7 +1557,7 @@ hybrid_predictor:
       alert_on_negative_profit: true  # Alert if losses detected
       alert_threshold: -10000  # Alert if cumulative loss > $10K
 
-      # FIX L5: expected_ranges updated to current actuals (2026-04-12, n=7701).
+      # expected_ranges updated to current actuals (2026-04-12, n=7701).
       # Previous ranges were from Run 3 (n=268) and would permanently fire alerts
       # on every production batch since churn_rate_pct actual=6.44% vs old upper=2.0%.
       # Current ranges are interim production baselines; narrow them as churn improves
@@ -1575,7 +1575,7 @@ hybrid_predictor:
     random_state: 42  # For reproducibility
     output_dir: reports
 
-    # ✅ Segment thresholds (also defined in global evaluation section)
+    # Segment thresholds (also defined in global evaluation section)
     segment_thresholds:
       low_value: 4500.0      # Policies under this = low risk
       standard: 15000.0      # Mid-tier policies
@@ -1585,13 +1585,13 @@ hybrid_predictor:
     primary_metric: net_profit    # was: smape — see evaluation.metrics comment above
     min_segment_samples: 10  # Minimum samples for reliable segment metrics
 
-    # FIX L4: optimal_config_source updated to current version.
+    # optimal_config_source updated to current version.
     use_optimal_config: true
-    optimal_config_source: config_v7.5.0  # was: config_v7.3.1 (stale)
+    optimal_config_source: config_v7.5.0
 
   # ====================================================
   # DEPLOYMENT METADATA
-  # FIX L4: Updated to reflect current v7.5.0 evaluation results.
+  # Updated to reflect current v7.5.0 evaluation results.
   # Previous values were from Run 3 (2026-02-27) with test_set_size=268.
   # Current results are from evaluate.py run dated 2026-04-12, test_set=7701.
   # ====================================================
@@ -1634,11 +1634,11 @@ hybrid_predictor:
       threshold_7500: Lowered 9500→7500 (v7.5.5) — shrinks actuarial-dominant zone; policies with act_preds in [$6,500, $8,500] now ML-dominant (ml_weight=1.0); smokers unaffected (already ML-dominant at any threshold due to smoker_multiplier=3.5)
       blend_ratio_075: Raised 0.58→0.75 — actuarial confirmed 0.87x ML after scaling; ML must dominate blended zone
       actuarial_scaled_135x: Absolute cost components ×1.35 — corrected 0.61x actuarial/ML ratio to 0.87x (within ±15% normal range)
-      churn_sensitivity_10: 'Fixed 0.01→1.0 — formula: excess_fraction × sensitivity; 0.01 required 5000% overpricing to reach 50% churn'
+      churn_sensitivity_10: '— formula: excess_fraction × sensitivity; 0.01 required 5000% overpricing to reach 50% churn'
       apply_to_ml_only_true: Calibration targets ML systematic underprediction only; applying to full hybrid would inflate actuarial path
 
     # Known issues and limitations
-    # FIX H1: known_limitations updated to current v7.5.0 actuals (2026-04-14).
+    # known_limitations updated to current v7.5.0 actuals (2026-04-14).
     known_limitations:
     - ML model has systematic underpricing bias (~9-11%); calibration_factor=1.00 means no active correction — monitor MAPE by segment
     - VH segment actuarial/ML ratio=0.608x; smoker×BMI×age interaction term added (coeff=8.0) but has no effect on predictions — smoker_multiplier=3.5 ensures all smokers are already ML-dominant (act >> threshold), so the interaction only affects the actuarial_vs_ml_ratio diagnostic log
@@ -1689,7 +1689,7 @@ hybrid_predictor:
       - Strategic review of hybrid vs ML-only performance
       - Statistical significance testing
 
-    # FIX H1: success_metrics updated to current actuals and realistic near-term targets.
+    # success_metrics updated to current actuals and realistic near-term targets.
     success_metrics:
       must_achieve:
       - Positive net profit every month
@@ -1745,7 +1745,7 @@ evaluation:
   # METRIC CONFIGURATION
   # ====================================================
   metrics:
-    # FIX M6: primary_metric changed from "smape" to "net_profit".
+    # primary_metric changed from "smape" to "net_profit".
     # The operator notes (OPERATOR NOTES section) explicitly state:
     #   "SMAPE/MALE: segment accuracy — use for drift detection, not deployment decisions"
     # Setting primary_metric: smape contradicts the documented decision framework
@@ -1762,7 +1762,7 @@ evaluation:
 
     # SMAPE configuration (insurance-appropriate)
     smape:
-      threshold: 0.01  # $0.01 minimum denominator (✅ FIXED from 1e-10)
+      threshold: 0.01  # $0.01 minimum denominator
       warn_above_pct: 100.0  # Warn if SMAPE > 100%
       error_above_pct: 200.0  # Error if SMAPE > 200%
       log_diagnostics: true  # Log detailed diagnostics
@@ -1824,7 +1824,7 @@ evaluation:
       enabled: true
 
       # Underpricing penalty (MUST match business_config.underpricing_penalty_multiplier)
-      underpricing_multiplier: 0.3  # ✅ Matches business_config value
+      underpricing_multiplier: 0.3  # Matches business_config value
 
       # Overpricing penalty (churn-based, always 1.0x)
       overpricing_multiplier: 1.0
@@ -1861,7 +1861,7 @@ evaluation:
     # Statistical testing
     statistical_tests:
       enabled: true
-      # T2-D (v7.5.0): test is now on per-policy net_profit (business signal),
+      # test is now on per-policy net_profit (business signal),
       # not on absolute error (academic signal).  A hybrid that reduces MAE while
       # increasing underpricing penalties will no longer show as "significantly better".
       # The MAE-based test is retained in evaluate.py as a secondary diagnostic.
@@ -2032,7 +2032,7 @@ evaluation:
 #
 # CHANGES IN v7.5.0 (applied to predict.py + evaluate.py)
 #
-# CRITICAL BUG FIXES (must run evaluate.py with fresh results):
+# (must run evaluate.py with fresh results):
 #   T1-A: _full_cfg NameError on config load failure in compare_multiple_configurations
 #          → added _full_cfg = {} to except block; sweep now survives YAML errors
 #   T1-B: Config comparison sweep used code-default actuarial params (smoker_multiplier=1.8)
@@ -2061,7 +2061,7 @@ evaluation:
 #   T3-C: Batch cap moved to config (prediction.max_batch_size=10000)
 #   T3-D: CI note now reads n_bins and winsorize_percentile from artifact dynamically
 #
-# FIX H5: Operator notes profit delta expectation corrected.
+#   Operator notes profit delta expectation corrected.
 #   Previous note stated "Expected: profit delta −$15K to +$5K (up from −$36,602)".
 #   Actual post-T1/T2/T3 result: +$917,086 — 183× above the upper bound.
 #   Root cause: T3-A (revenue model overhaul) changed the profit accounting formula
@@ -2086,14 +2086,14 @@ evaluation:
 # 3. KNOWN LIMITATIONS (v7.5.0 — updated 2026-04-12 post-evaluation)
 #    - VH segment actuarial/ML ratio = 0.608x (confirmed by 05_vh_analysis.ipynb)
 #      Option 3 (VH-restricted hybrid) is definitively closed — actuarial is worse there
-#      VH fix requires smoker×BMI×age interaction term in _calculate_actuarial_prediction
+#      requires smoker×BMI×age interaction term in _calculate_actuarial_prediction
 #    - Churn rate 6.44% (vs ML 3.95%) — root cause: actuarial-path over-prices a small
 #      subset in the $7,500–$18,037 transition zone; each over-priced policy triggers CLV churn cost
 #    - CI mean width $11,859 = 92% of mean premium ($12,836); must be disclosed to API consumers
 #    - Business penalties theoretical — not validated against historical loss data
 #    - Test set only 7701 policies — re-validate on additional 1000+ held-out set before full deployment
 #
-# 4. NEXT STEPS TO REACH ✅ DEPLOY (currently ⚠️ CONDITIONAL)
+# 4. NEXT STEPS TO REACH DEPLOY (currently ⚠️ CONDITIONAL)
 #    HIGH PRIORITY
 #      a) Re-run evaluate.py with threshold=7500 — confirm churn drops below ML baseline (3.94%)
 #         and BizScore crosses above ML (87.4) to flip gate to HIGH confidence
@@ -2106,7 +2106,7 @@ evaluation:
 #
 # 5. RUNNING EVALUATIONS
 #    Standard:          python evaluate.py
-#    Config comparison: python evaluate.py --compare-configs   ← results now valid (T1-B fixed)
+#    Config comparison: python evaluate.py --compare-configs   ← results now valid
 #    Business tuning:   python evaluate.py --tune-business-params
 #    All output:        reports/
 #
@@ -2159,7 +2159,7 @@ api:
 
   metrics:
     enabled: true
-    # M-09 FIX: corrected from '/metrics' (wrong — HTTP 404) to the actual
+    # corrected from '/metrics' (wrong — HTTP 404) to the actual
     # FastAPI route registered in routes.py.  Any scrape config or operator
     # script reading this key now targets the correct path.
     # Note: the Prometheus text-format scrape endpoint is separate:

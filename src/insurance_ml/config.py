@@ -3,23 +3,10 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-# ISSUE-1 FIX (v7.5.1): Use reconfigure() instead of replacing sys.stdout/stderr
-# with new TextIOWrapper objects.
-#
-# The previous approach (io.TextIOWrapper(sys.stdout.buffer, ...)) created brand-new
-# stream objects and assigned them to sys.stdout/sys.stderr.  Under pytest
-# --capture=sys on Windows, sys.stderr at import time IS pytest's internal capture
-# StringIO buffer.  Wrapping it in a new TextIOWrapper produced an object that
-# would call .close() on the underlying StringIO when the wrapper itself was
-# closed or garbage-collected, destroying pytest's capture buffer and causing:
-#
-#   ValueError: I/O operation on closed file.    (at teardown)
-#
-# reconfigure() mutates the existing stream object in-place — no new object is
-# created, no reference to the underlying buffer is transferred, and pytest's
-# capture machinery continues to own and control its own stream objects.
+import yaml  # type: ignore[import-untyped]
+from dotenv import load_dotenv
 
 
 def _configure_windows_utf8_stdio() -> None:
@@ -40,8 +27,6 @@ def _configure_windows_utf8_stdio() -> None:
 
 _configure_windows_utf8_stdio()
 
-import yaml
-from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -101,9 +86,9 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
             raise ValueError(f"Config file is empty: {config_path_obj}")
 
     except yaml.YAMLError as e:
-        raise ValueError(f"Invalid YAML in config file: {e}")
+        raise ValueError(f"Invalid YAML in config file: {e}") from e
     except Exception as e:
-        raise ValueError(f"Error reading config file: {e}")
+        raise ValueError(f"Error reading config file: {e}") from e
 
     # Apply environment variable overrides
     config = _apply_env_overrides(config)
@@ -111,7 +96,7 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     # Validate configuration structure (required sections / keys)
     _validate_config(config)
 
-    # ISSUE-2 FIX (v7.5.0): Enforce single-source-of-truth on every load.
+    # Enforce single-source-of-truth on every load.
     # The original code only called validate_single_source_of_truth() from the
     # __main__ demo block, so the duplicate data.validation_size / training.val_size
     # conflict (BUG-A root cause) was never caught in production code paths
@@ -155,13 +140,13 @@ def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
             logger.debug(f"Data path override: {config['data']['raw_path']}")
 
     # Random state (for reproducibility)
-    # FIX NEW-A: original code only wrote to defaults.random_state, but
+    # original code only wrote to defaults.random_state, but
     # get_training_config() reads from cross_validation.random_state and
     # data.random_state — so the env override had zero effect on splits.
     # Now propagates to ALL sections that consume random_state.
     if os.getenv("RANDOM_STATE"):
         try:
-            random_state = int(os.getenv("RANDOM_STATE"))
+            random_state = int(os.getenv("RANDOM_STATE", "0"))
             _updated_sections = []
             if "defaults" in config:
                 config["defaults"]["random_state"] = random_state
@@ -182,16 +167,11 @@ def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
     # MLflow tracking URI
     if os.getenv("MLFLOW_TRACKING_URI"):
         if "mlflow" in config and "tracking" in config["mlflow"]:
-            config["mlflow"]["tracking"]["tracking_uri"] = os.getenv(
-                "MLFLOW_TRACKING_URI"
-            )
+            config["mlflow"]["tracking"]["tracking_uri"] = os.getenv("MLFLOW_TRACKING_URI")
 
     # GPU override
     _cuda_visible = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
-    _force_cpu = (
-        os.getenv("USE_GPU", "true").lower() in ("false", "0", "no")
-        or _cuda_visible == ""
-    )
+    _force_cpu = os.getenv("USE_GPU", "true").lower() in ("false", "0", "no") or _cuda_visible == ""
 
     if _force_cpu and "gpu" in config:
         gpu_cfg = config["gpu"]
@@ -205,7 +185,7 @@ def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
             "all model device params set to CPU"
         )
     elif os.getenv("USE_GPU"):
-        use_gpu = os.getenv("USE_GPU").lower() in ["true", "1", "yes"]
+        use_gpu = os.getenv("USE_GPU", "").lower() in ["true", "1", "yes"]
         if "gpu" in config:
             config["gpu"]["enabled"] = use_gpu
             logger.debug(f"GPU override: {use_gpu}")
@@ -240,8 +220,8 @@ def _validate_config(config: dict[str, Any]) -> None:
         "validation",
         "hardware",
         "sample_weights",
-        "prediction",   # v7.5.0: batch size cap (prediction.max_batch_size)
-        "conformal",    # v7.5.0: calibration split ratio
+        "prediction",  # v7.5.0: batch size cap (prediction.max_batch_size)
+        "conformal",  # v7.5.0: calibration split ratio
     ]
 
     missing_sections = [s for s in required_sections if s not in config]
@@ -283,8 +263,7 @@ def _validate_config(config: dict[str, Any]) -> None:
     missing_hardware = [k for k in required_hardware if k not in hardware_cfg]
     if missing_hardware:
         raise ValueError(
-            f"❌ hardware section missing: {missing_hardware}\n"
-            f"   Required: {required_hardware}"
+            f"❌ hardware section missing: {missing_hardware}\n" f"   Required: {required_hardware}"
         )
 
     # Validate defaults section (NO DEFAULTS)
@@ -322,16 +301,13 @@ def _validate_config(config: dict[str, Any]) -> None:
     missing_gpu = [k for k in required_gpu if k not in gpu_cfg]
     if missing_gpu:
         raise ValueError(
-            f"❌ Config 'gpu' section missing: {missing_gpu}\n"
-            f"   Required: {required_gpu}"
+            f"❌ Config 'gpu' section missing: {missing_gpu}\n" f"   Required: {required_gpu}"
         )
 
     # Validate GPU subsections (NO DEFAULTS)
     if gpu_cfg["enabled"]:
         if "xgboost" not in gpu_cfg:
-            raise ValueError(
-                "❌ Config 'gpu.xgboost' section required when GPU enabled"
-            )
+            raise ValueError("❌ Config 'gpu.xgboost' section required when GPU enabled")
 
         xgb_cfg = gpu_cfg["xgboost"]
         # ── BUG 6 RESOLVED ───────────────────────────────────────────────
@@ -351,9 +327,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"❌ Config 'gpu.xgboost' missing: {missing_xgb}")
 
         if "lightgbm" not in gpu_cfg:
-            raise ValueError(
-                "❌ Config 'gpu.lightgbm' section required when GPU enabled"
-            )
+            raise ValueError("❌ Config 'gpu.lightgbm' section required when GPU enabled")
 
         lgb_cfg = gpu_cfg["lightgbm"]
         required_lgb = [
@@ -368,7 +342,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"❌ Config 'gpu.lightgbm' missing: {missing_lgb}")
 
     # Validate data section (NO DEFAULTS)
-    # Issue 5 FIX: 'validation_size' removed from required_data.
+    # 'validation_size' removed from required_data.
     # data.validation_size exists in config.yaml as a legacy field but is
     # never read by any helper function — get_training_config() uses
     # training.val_size exclusively.  Requiring it here caused startup
@@ -396,21 +370,16 @@ def _validate_config(config: dict[str, Any]) -> None:
         "polynomial_features",
         "collinearity_removal",
     ]
-    missing_feature_sections = [
-        s for s in required_feature_sections if s not in features_cfg
-    ]
+    missing_feature_sections = [s for s in required_feature_sections if s not in features_cfg]
     if missing_feature_sections:
-        raise ValueError(
-            f"❌ Config 'features' section missing: {missing_feature_sections}"
-        )
+        raise ValueError(f"❌ Config 'features' section missing: {missing_feature_sections}")
 
     # Validate target transform method (STRICT - NO DEFAULTS)
     valid_methods = validation_cfg["valid_target_transform_methods"]
     method = features_cfg["target_transform"].get("method", "")
     if method not in valid_methods:
         raise ValueError(
-            f"❌ Invalid target transform method: '{method}'\n"
-            f"   Valid options: {valid_methods}"
+            f"❌ Invalid target transform method: '{method}'\n" f"   Valid options: {valid_methods}"
         )
 
     # Validate outlier contamination (STRICT - NO DEFAULTS)
@@ -433,9 +402,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         min_vif = validation_cfg["vif_min"]
 
         if vif_threshold <= min_vif:
-            raise ValueError(
-                f"❌ VIF threshold must be > {min_vif}, got {vif_threshold}"
-            )
+            raise ValueError(f"❌ VIF threshold must be > {min_vif}, got {vif_threshold}")
 
     # Validate polynomial degree (STRICT - NO DEFAULTS)
     poly_cfg = features_cfg.get("polynomial_features", {})
@@ -444,17 +411,13 @@ def _validate_config(config: dict[str, Any]) -> None:
         min_degree = validation_cfg["polynomial_degree_min"]
 
         if degree < min_degree:
-            raise ValueError(
-                f"❌ Polynomial degree must be >= {min_degree}, got {degree}"
-            )
+            raise ValueError(f"❌ Polynomial degree must be >= {min_degree}, got {degree}")
 
         max_features = poly_cfg.get("max_features")
         if max_features is None:
             raise ValueError("❌ Polynomial 'max_features' is required when enabled")
         if max_features < 1:
-            raise ValueError(
-                f"❌ Polynomial max_features must be >= 1, got {max_features}"
-            )
+            raise ValueError(f"❌ Polynomial max_features must be >= 1, got {max_features}")
 
     # Validate GPU settings (STRICT - NO DEFAULTS)
     if gpu_cfg["enabled"]:
@@ -509,9 +472,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             "enable_shap",
             "auto_plot",
         ]
-        missing_explainability = [
-            k for k in required_explainability if k not in diag_cfg
-        ]
+        missing_explainability = [k for k in required_explainability if k not in diag_cfg]
         if missing_explainability:
             raise ValueError(
                 f"⛔ diagnostics section missing explainability keys: {missing_explainability}\n"
@@ -521,9 +482,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         # Validate confidence level
         confidence_level = diag_cfg.get("confidence_level", 0)
         if not (0 < confidence_level < 1):
-            raise ValueError(
-                f"⛔ confidence_level must be in (0, 1), got {confidence_level}"
-            )
+            raise ValueError(f"⛔ confidence_level must be in (0, 1), got {confidence_level}")
 
     # Validate prediction section (v7.5.0 — max_batch_size is config-driven)
     prediction_cfg = config["prediction"]
@@ -532,7 +491,10 @@ def _validate_config(config: dict[str, Any]) -> None:
             "❌ prediction section missing 'max_batch_size'\n"
             "   Required: prediction.max_batch_size (int, e.g. 10000)"
         )
-    if not isinstance(prediction_cfg["max_batch_size"], int) or prediction_cfg["max_batch_size"] < 1:
+    if (
+        not isinstance(prediction_cfg["max_batch_size"], int)
+        or prediction_cfg["max_batch_size"] < 1
+    ):
         raise ValueError(
             f"❌ prediction.max_batch_size must be a positive integer, "
             f"got {prediction_cfg['max_batch_size']!r}"
@@ -546,10 +508,8 @@ def _validate_config(config: dict[str, Any]) -> None:
             "   Required: conformal.calibration_split_ratio (float in (0, 1))"
         )
     csr = conformal_cfg["calibration_split_ratio"]
-    if not isinstance(csr, (int, float)) or not (0 < csr < 1):
-        raise ValueError(
-            f"❌ conformal.calibration_split_ratio must be in (0, 1), got {csr!r}"
-        )
+    if not isinstance(csr, int | float) or not (0 < csr < 1):
+        raise ValueError(f"❌ conformal.calibration_split_ratio must be in (0, 1), got {csr!r}")
 
     # Validate training.deployment_gates (v7.5.0 — G3/G6/G7 now all config-driven)
     training_cfg_val = config["training"]
@@ -571,9 +531,7 @@ def _validate_config(config: dict[str, Any]) -> None:
 
     # Validate training.two_model_architecture (v7.5.0)
     if "two_model_architecture" not in training_cfg_val:
-        raise ValueError(
-            "❌ training section missing 'two_model_architecture' sub-section"
-        )
+        raise ValueError("❌ training section missing 'two_model_architecture' sub-section")
     tma_cfg = training_cfg_val["two_model_architecture"]
     required_tma = [
         "enabled",
@@ -602,15 +560,12 @@ def _validate_config(config: dict[str, Any]) -> None:
     missing_prov = [k for k in required_prov if k not in prov_cfg]
     if missing_prov:
         raise ValueError(
-            f"❌ training.provenance missing: {missing_prov}\n"
-            f"   Required: {required_prov}"
+            f"❌ training.provenance missing: {missing_prov}\n" f"   Required: {required_prov}"
         )
 
     # Validate training.conformal_intervals (v7.5.0)
     if "conformal_intervals" not in training_cfg_val:
-        raise ValueError(
-            "❌ training section missing 'conformal_intervals' sub-section"
-        )
+        raise ValueError("❌ training section missing 'conformal_intervals' sub-section")
     ci_cfg = training_cfg_val["conformal_intervals"]
     required_ci = [
         "method",
@@ -622,8 +577,7 @@ def _validate_config(config: dict[str, Any]) -> None:
     missing_ci = [k for k in required_ci if k not in ci_cfg]
     if missing_ci:
         raise ValueError(
-            f"❌ training.conformal_intervals missing: {missing_ci}\n"
-            f"   Required: {required_ci}"
+            f"❌ training.conformal_intervals missing: {missing_ci}\n" f"   Required: {required_ci}"
         )
 
     # Validate model hyperparameters defined
@@ -691,7 +645,7 @@ def setup_logging(config: dict[str, Any] | None = None) -> None:
             root_logger.handlers.clear()
 
         # Setup handlers
-        handlers = [
+        handlers: list[logging.Handler] = [
             logging.FileHandler(log_file, encoding="utf-8"),
             logging.StreamHandler(),
         ]
@@ -816,9 +770,7 @@ def get_validation_config(config: dict[str, Any]) -> dict[str, Any]:
         "vif_min": validation_cfg["vif_min"],
         "polynomial_degree_min": validation_cfg["polynomial_degree_min"],
         "valid_xgboost_devices": validation_cfg["valid_xgboost_devices"],
-        "valid_target_transform_methods": validation_cfg[
-            "valid_target_transform_methods"
-        ],
+        "valid_target_transform_methods": validation_cfg["valid_target_transform_methods"],
         "weight_sum_tolerance": validation_cfg["weight_sum_tolerance"],
     }
 
@@ -936,8 +888,7 @@ def get_gpu_config(config: dict[str, Any]) -> dict[str, Any]:
 
         if missing_xgb:
             raise ValueError(
-                f"❌ gpu.xgboost section missing: {missing_xgb}\n"
-                f"   Required: {required_xgb}"
+                f"❌ gpu.xgboost section missing: {missing_xgb}\n" f"   Required: {required_xgb}"
             )
 
         result.update(
@@ -968,8 +919,7 @@ def get_gpu_config(config: dict[str, Any]) -> dict[str, Any]:
 
         if missing_lgb:
             raise ValueError(
-                f"❌ gpu.lightgbm section missing: {missing_lgb}\n"
-                f"   Required: {required_lgb}"
+                f"❌ gpu.lightgbm section missing: {missing_lgb}\n" f"   Required: {required_lgb}"
             )
 
         result.update(
@@ -1163,8 +1113,8 @@ def get_feature_config(config: dict[str, Any]) -> dict[str, Any]:
             "bmi_max": features_cfg["bmi_max"],
             "age_min": features_cfg["age_min"],
             "age_max": features_cfg["age_max"],
-            "children_min": features_cfg["children_min"],   # F-08 (v7.5.0)
-            "children_max": features_cfg["children_max"],   # F-08 (v7.5.0)
+            "children_min": features_cfg["children_min"],  # F-08 (v7.5.0)
+            "children_max": features_cfg["children_max"],  # F-08 (v7.5.0)
         }
     )
 
@@ -1207,7 +1157,7 @@ def get_model_configs(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "   Config.yaml v6.1.0 must define model hyperparameters"
         )
 
-    return config["models"]
+    return cast(dict[str, dict[str, Any]], config["models"])
 
 
 def get_sample_weight_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -1265,9 +1215,7 @@ def get_prediction_config(config: dict[str, Any]) -> dict[str, Any]:
 
     mbs = pred_cfg["max_batch_size"]
     if not isinstance(mbs, int) or mbs < 1:
-        raise ValueError(
-            f"❌ prediction.max_batch_size must be a positive integer, got {mbs!r}"
-        )
+        raise ValueError(f"❌ prediction.max_batch_size must be a positive integer, got {mbs!r}")
 
     return {"max_batch_size": mbs}
 
@@ -1301,10 +1249,8 @@ def get_conformal_config(config: dict[str, Any]) -> dict[str, Any]:
         )
 
     csr = conf_cfg["calibration_split_ratio"]
-    if not isinstance(csr, (int, float)) or not (0 < csr < 1):
-        raise ValueError(
-            f"❌ conformal.calibration_split_ratio must be in (0, 1), got {csr!r}"
-        )
+    if not isinstance(csr, int | float) or not (0 < csr < 1):
+        raise ValueError(f"❌ conformal.calibration_split_ratio must be in (0, 1), got {csr!r}")
 
     return {"calibration_split_ratio": float(csr)}
 
@@ -1332,9 +1278,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
     required = ["n_trials", "timeout", "n_jobs", "random_state"]
     missing = [k for k in required if k not in optuna_cfg]
     if missing:
-        raise ValueError(
-            f"❌ optuna section missing: {missing}\n" f"   Required: {required}"
-        )
+        raise ValueError(f"❌ optuna section missing: {missing}\n" f"   Required: {required}")
 
     # Get referenced configs (these will validate themselves)
     cv_cfg = get_cv_config(config)
@@ -1431,9 +1375,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
     required_models = ["xgboost", "lightgbm", "random_forest"]
     missing_models = [m for m in required_models if m not in constrained]
     if missing_models:
-        raise ValueError(
-            f"❌ optuna.constrained_params missing models: {missing_models}"
-        )
+        raise ValueError(f"❌ optuna.constrained_params missing models: {missing_models}")
 
     # Validate XGBoost constrained params
     # NOTE (v7.4.5): scale_pos_weight intentionally removed from required_xgb.
@@ -1444,7 +1386,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
     # .fit() call across all 100 trials × 5 folds (500+ warnings per run).
     # The optimizer strips it pre-construction via _filter_xgb_quantile_params()
     # as an additional safety net, but removing it from the validator is the
-    # correct fix: it allows config.yaml to omit it from constrained_params entirely.
+    # it allows config.yaml to omit it from constrained_params entirely.
     xgb_params = constrained["xgboost"]
     required_xgb = [
         "n_estimators",
@@ -1488,9 +1430,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
     ]
     missing_lgb = [p for p in required_lgb if p not in lgb_params]
     if missing_lgb:
-        raise ValueError(
-            f"❌ optuna.constrained_params.lightgbm missing: {missing_lgb}"
-        )
+        raise ValueError(f"❌ optuna.constrained_params.lightgbm missing: {missing_lgb}")
 
     # Validate Random Forest constrained params
     rf_params = constrained["random_forest"]
@@ -1505,9 +1445,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
     ]
     missing_rf = [p for p in required_rf if p not in rf_params]
     if missing_rf:
-        raise ValueError(
-            f"❌ optuna.constrained_params.random_forest missing: {missing_rf}"
-        )
+        raise ValueError(f"❌ optuna.constrained_params.random_forest missing: {missing_rf}")
 
     # Validate file lock section
     if "file_lock" not in optuna_cfg:
@@ -1573,9 +1511,9 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
         "storage": optuna_cfg.get("storage"),  # Can be None/null
         "load_if_exists": optuna_cfg["load_if_exists"],
         # Constrained hyperparameters
-        # FIX-1b: pass through ALL models present in constrained_params,
+        # pass through ALL models present in constrained_params,
         # not just the 3 required ones. Without this, xgboost_median added
-        # to config.yaml is silently dropped here, defeating Fix 1a+1b.
+        # to config.yaml is silently dropped here.
         "constrained_params": {
             "xgboost": xgb_params,
             "lightgbm": lgb_params,
@@ -1584,8 +1522,7 @@ def get_optuna_config(config: dict[str, Any]) -> dict[str, Any]:
             **{
                 k: v
                 for k, v in constrained.items()
-                if k not in {"xgboost", "lightgbm", "random_forest"}
-                and isinstance(v, dict)
+                if k not in {"xgboost", "lightgbm", "random_forest"} and isinstance(v, dict)
             },
         },
         # File locking
@@ -1637,9 +1574,7 @@ def get_training_config(config: dict[str, Any]) -> dict[str, Any]:
     ]
     missing = [k for k in required if k not in training_cfg]
     if missing:
-        raise ValueError(
-            f"❌ training section missing: {missing}\n" f"   Required: {required}"
-        )
+        raise ValueError(f"❌ training section missing: {missing}\n" f"   Required: {required}")
 
     # Validate checkpoint section
     if "checkpoint" not in training_cfg:
@@ -1735,7 +1670,7 @@ def get_training_config(config: dict[str, Any]) -> dict[str, Any]:
     # Get referenced configs (these will validate themselves)
     gpu_cfg = get_gpu_config(config)
     cv_cfg = get_cv_config(config)
-    # PA-06 FIX: random_state canonical source is defaults.random_state, not
+    # random_state canonical source is defaults.random_state, not
     # cross_validation.random_state.  If only defaults.random_state is overridden
     # via env var, cv_cfg["random_state"] may remain at the YAML value, causing
     # the training loop to use a different seed than the rest of the pipeline.
@@ -1952,9 +1887,7 @@ def get_high_value_config(config: dict[str, Any]) -> dict[str, Any]:
     required_reporting = ["save_report", "format"]
     missing_reporting = [k for k in required_reporting if k not in reporting]
     if missing_reporting:
-        raise ValueError(
-            f"❌ high_value_analysis.reporting missing: {missing_reporting}"
-        )
+        raise ValueError(f"❌ high_value_analysis.reporting missing: {missing_reporting}")
 
     return {
         "enabled": hv_cfg["enabled"],
@@ -2144,9 +2077,7 @@ def get_explainability_config(config: dict[str, Any]) -> dict[str, Any]:
     # Validate confidence level range
     confidence_level = diag_cfg["confidence_level"]
     if not (0 < confidence_level < 1):
-        raise ValueError(
-            f"⛔ confidence_level must be in (0, 1), got {confidence_level}"
-        )
+        raise ValueError(f"⛔ confidence_level must be in (0, 1), got {confidence_level}")
 
     # Validate sampling section for SHAP parameters
     if "sampling" not in diag_cfg:
@@ -2261,25 +2192,17 @@ def validate_single_source_of_truth(config: dict[str, Any]) -> None:
 
     # Check for CV folds redundancy (should only be in cross_validation)
     if "cv_folds" in config.get("model", {}):
-        errors.append(
-            "model.cv_folds exists (should reference cross_validation.n_folds)"
-        )
+        errors.append("model.cv_folds exists (should reference cross_validation.n_folds)")
 
     if "cv_folds" in config.get("training", {}):
-        errors.append(
-            "training.cv_folds exists (should reference cross_validation.n_folds)"
-        )
+        errors.append("training.cv_folds exists (should reference cross_validation.n_folds)")
 
     # Check for GPU memory redundancy (should only be in gpu)
     if "gpu_memory_fraction" in config.get("training", {}):
-        errors.append(
-            "training.gpu_memory_fraction exists (should reference gpu.memory_fraction)"
-        )
+        errors.append("training.gpu_memory_fraction exists (should reference gpu.memory_fraction)")
 
     if "gpu_memory_limit_mb" in config.get("optuna", {}):
-        errors.append(
-            "optuna.gpu_memory_limit_mb exists (should reference gpu.memory_limit_mb)"
-        )
+        errors.append("optuna.gpu_memory_limit_mb exists (should reference gpu.memory_limit_mb)")
 
     # Check for cross_validation in optuna (should reference top-level)
     if "cross_validation" in config.get("optuna", {}):
@@ -2287,14 +2210,12 @@ def validate_single_source_of_truth(config: dict[str, Any]) -> None:
             "optuna.cross_validation exists (should reference top-level cross_validation)"
         )
 
-    # Issue 10 FIX: Check the one actual violation present in the live codebase.
+    # Check the one actual violation present in the live codebase.
     # data.validation_size is required by _validate_config() (legacy) but never
     # consumed — get_training_config() uses training.val_size as the sole source
     # of truth for the validation split size.  Having both defined is misleading:
     # changing data.validation_size has zero effect while appearing authoritative.
-    if "validation_size" in config.get("data", {}) and "val_size" in config.get(
-        "training", {}
-    ):
+    if "validation_size" in config.get("data", {}) and "val_size" in config.get("training", {}):
         errors.append(
             "Both data.validation_size and training.val_size are defined. "
             "Only training.val_size is used by get_training_config(). "
@@ -2305,9 +2226,9 @@ def validate_single_source_of_truth(config: dict[str, Any]) -> None:
 
     if errors:
         raise ValueError(
-            f"❌ Configuration violates single source of truth principle:\n"
+            "❌ Configuration violates single source of truth principle:\n"
             + "\n".join(f"   - {e}" for e in errors)
-            + f"\n\nPlease update to config.yaml v6.1.0 architecture"
+            + "\n\nPlease update to config.yaml v6.1.0 architecture"
         )
 
     logger.info("✅ Configuration follows single source of truth principles")
@@ -2340,15 +2261,15 @@ def print_gpu_config_summary(config: dict[str, Any]) -> None:
     print(f"  Memory Limit: {gpu_cfg['memory_limit_mb']}MB (SINGLE SOURCE)")
     print(f"  Memory Fraction: {gpu_cfg['memory_fraction']}")
     print(f"  Total VRAM: {hardware_cfg.get('total_vram_mb', 'Unknown')}MB")
-    print(f"\n  XGBoost:")
+    print("\n  XGBoost:")
     print(f"    Device: {gpu_cfg['xgboost_device']}")
     print(f"    Tree Method: {gpu_cfg['xgboost_tree_method']}")
     print(f"    Max Bin: {gpu_cfg['xgboost_max_bin']}")
-    print(f"\n  LightGBM:")
+    print("\n  LightGBM:")
     print(f"    Device: {gpu_cfg['lightgbm_device']}")
     print(f"    GPU Device ID: {gpu_cfg['lightgbm_gpu_device_id']}")
     print(f"    Max Bin: {gpu_cfg['lightgbm_max_bin']}")
-    print(f"\n  Fallback:")
+    print("\n  Fallback:")
     print(f"    CPU on OOM: {gpu_cfg['cpu_fallback_on_oom']}")
     print("=" * 80)
 
@@ -2372,13 +2293,13 @@ def print_config_summary(config: dict[str, Any]) -> None:
 
     # Defaults
     defaults = get_defaults(config)
-    print(f"\n🎲 Global Defaults:")
+    print("\n🎲 Global Defaults:")
     print(f"   Random state: {defaults['random_state']}")
     print(f"   N jobs: {defaults['n_jobs']}")
 
     # Cross-validation
     cv_cfg = get_cv_config(config)
-    print(f"\n📊 Cross-Validation (Single Source):")
+    print("\n📊 Cross-Validation (Single Source):")
     print(f"   Folds: {cv_cfg['n_folds']}")
     print(f"   Shuffle: {cv_cfg['shuffle']}")
     print(f"   Stratified: {cv_cfg['stratified']}")
@@ -2398,12 +2319,8 @@ def print_config_summary(config: dict[str, Any]) -> None:
     features_cfg = config.get("features", {})
     target_transform_method = features_cfg.get("target_transform", {}).get("method")
     outlier_enabled = features_cfg.get("outlier_removal", {}).get("enabled", False)
-    polynomial_enabled = features_cfg.get("polynomial_features", {}).get(
-        "enabled", False
-    )
-    collinearity_enabled = features_cfg.get("collinearity_removal", {}).get(
-        "enabled", False
-    )
+    polynomial_enabled = features_cfg.get("polynomial_features", {}).get("enabled", False)
+    collinearity_enabled = features_cfg.get("collinearity_removal", {}).get("enabled", False)
     vif_threshold = features_cfg.get("collinearity_removal", {}).get("vif_threshold")
 
     print("\n🔧 Feature Engineering:")
@@ -2447,9 +2364,7 @@ def print_config_summary(config: dict[str, Any]) -> None:
     try:
         explainability_cfg = get_explainability_config(config)
         print("\n🔍 Explainability:")
-        print(
-            f"   Confidence Intervals: {explainability_cfg['enable_confidence_intervals']}"
-        )
+        print(f"   Confidence Intervals: {explainability_cfg['enable_confidence_intervals']}")
         print(f"   Confidence Level: {explainability_cfg['confidence_level']*100:.0f}%")
         print(f"   SHAP Analysis: {explainability_cfg['enable_shap']}")
         print(f"   SHAP Max Samples: {explainability_cfg['shap_max_samples']}")
@@ -2479,21 +2394,21 @@ def print_single_source_verification(config: dict[str, Any]) -> None:
 
     print("\n✅ Cross-Validation:")
     print(f"   Source: cross_validation.n_folds = {cv_cfg['n_folds']}")
-    print(f"   ✓ No cv_folds in model section")
-    print(f"   ✓ No cv_folds in training section")
+    print("   ✓ No cv_folds in model section")
+    print("   ✓ No cv_folds in training section")
 
     print("\n✅ GPU Memory:")
     print(f"   Source: gpu.memory_limit_mb = {gpu_cfg['memory_limit_mb']}")
-    print(f"   ✓ No gpu_memory_limit_mb in optuna section")
-    print(f"   ✓ No gpu_memory_fraction in training section")
+    print("   ✓ No gpu_memory_limit_mb in optuna section")
+    print("   ✓ No gpu_memory_fraction in training section")
 
     print("\n✅ Random State:")
     print(f"   Source: defaults.random_state = {defaults['random_state']}")
-    print(f"   ✓ Referenced via YAML anchors")
+    print("   ✓ Referenced via YAML anchors")
 
     print("\n✅ N Jobs:")
     print(f"   Source: defaults.n_jobs = {defaults['n_jobs']}")
-    print(f"   ✓ Referenced via YAML anchors")
+    print("   ✓ Referenced via YAML anchors")
 
     print("\n" + "=" * 80)
     print("✅ Configuration follows single source of truth principles")
@@ -2571,7 +2486,7 @@ def save_config(config: dict[str, Any], output_path: str | None = None) -> None:
             yaml.dump(config, file, default_flow_style=False, sort_keys=False)
         logger.info(f"✅ Configuration saved to {output_path_obj}")
     except Exception as e:
-        raise ValueError(f"Error saving config file: {e}")
+        raise ValueError(f"Error saving config file: {e}") from e
 
 
 # ============================================================================
@@ -2587,16 +2502,14 @@ if __name__ == "__main__":
         # Load configuration
         print("\n[1/7] Loading configuration from config.yaml v7.5.0...")
         config = load_config()
-        print(
-            f"✅ Config loaded from: {get_project_root() / 'configs' / 'config.yaml'}"
-        )
+        print(f"✅ Config loaded from: {get_project_root() / 'configs' / 'config.yaml'}")
         print(f"   Environment: {config.get('environment', 'N/A')}")
         print(f"   Version: {config.get('version', 'N/A')}")
 
         # Setup logging
         print("\n[2/7] Setting up logging...")
         setup_logging(config)
-        print(f"✅ Logging configured")
+        print("✅ Logging configured")
 
         # Validate GPU config
         print("\n[3/7] Validating GPU configuration...")
@@ -2614,9 +2527,7 @@ if __name__ == "__main__":
         feature_cfg = get_feature_config(config)
         training_cfg = get_training_config(config)
 
-        print(
-            f"✅ Defaults: random_state={defaults['random_state']}, n_jobs={defaults['n_jobs']}"
-        )
+        print(f"✅ Defaults: random_state={defaults['random_state']}, n_jobs={defaults['n_jobs']}")
         print(f"✅ CV config: {cv_cfg['n_folds']} folds (single source)")
         print(f"✅ GPU config: {gpu_cfg['memory_limit_mb']}MB (single source)")
         print(f"✅ Feature config: {len(feature_cfg)} parameters")

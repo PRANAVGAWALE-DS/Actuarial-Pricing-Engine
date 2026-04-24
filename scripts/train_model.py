@@ -326,8 +326,8 @@ def apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> dict[st
     if args.no_gates:
         gates = config["training"].setdefault("deployment_gates", {})
         gates["g6_min_cost_weighted_r2"] = -999.0  # effectively disabled
-        gates["g7_max_overpricing_rate"] = 1.0      # 100% — can never exceed
-        gates["g3_max_width_ratio"] = 999.0         # unbounded — can never exceed
+        gates["g7_max_overpricing_rate"] = 1.0  # 100% — can never exceed
+        gates["g3_max_width_ratio"] = 999.0  # unbounded — can never exceed
         logger.warning(
             "  ⚠️  --no-gates active: "
             "G3 threshold → 999.0, G6 threshold → -999.0, G7 threshold → 1.0. "
@@ -374,8 +374,8 @@ def validate_config_and_data(config: dict[str, Any]) -> bool:
         "validation",
         "hardware",
         "sample_weights",
-        "prediction",   # v7.5.0: batch size cap
-        "conformal",    # v7.5.0: calibration split ratio
+        "prediction",  # v7.5.0: batch size cap
+        "conformal",  # v7.5.0: calibration split ratio
     ]
     for section in required_sections:
         if section not in config:
@@ -611,7 +611,7 @@ def main() -> None:
             print(f"\n✅ Dry run passed in {elapsed:.1f}s — config and data look good")
             sys.exit(0)
         else:
-            print(f"\n❌ Dry run found issues — fix before training")
+            print("\n❌ Dry run found issues — fix before training")
             sys.exit(1)
 
     # ── Run pipeline ──────────────────────────────────────────────────────────

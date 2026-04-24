@@ -14,8 +14,7 @@
 # - Removed tabulate, fsspec, numba, pydantic-settings, sqlalchemy
 # - Total savings: ~30 MB, 26 unused packages removed
 #
-# AUDIT FIXES (4.2.0 → 4.2.1):
-# - FIX [HIGH]:  Removed broken CLI entry point insurance-train.
+# - [HIGH]:  Removed broken CLI entry point insurance-train.
 #     scripts.train_model:main was registered as a console_scripts entry point
 #     but [tool.setuptools.packages.find] explicitly excludes "scripts*".
 #     A wheel/sdist install would expose a command that imports a module it
@@ -24,15 +23,15 @@
 #     To restore the entry point properly, move the main() function to a
 #     module inside src/insurance_ml/ (e.g. src/insurance_ml/cli.py) and
 #     register: insurance-train = "insurance_ml.cli:main"
-# - FIX [MEDIUM]: Removed invalid package-data globs configs/*.yaml and
+# - [MEDIUM]: Removed invalid package-data globs configs/*.yaml and
 #     data/*.csv. These paths do not exist under src/insurance_ml/ — the
 #     directories live at the project root. Moving them to
 #     src/insurance_ml/configs/ and src/insurance_ml/data/ is required to
 #     ship them inside the built wheel.
-# - FIX [D8-P2] / FIX F-03: Corrected coverage fail_under comment chain.
+# - Corrected coverage fail_under comment chain.
 #     The actual enforced value is 30 (see [tool.coverage.report] below).
 #     All comment references now agree: ci.yml, this changelog, and the gate.
-# - FIX [LOW]:   Added tensorboard to [dev] extras to match Makefile target.
+# - [LOW]:   Added tensorboard to [dev] extras to match Makefile target.
 # =====================================================
 
 [build-system]
@@ -187,7 +186,7 @@ dev = [
     "optuna-dashboard==0.20.0",
 
     # Profiling & Monitoring (training/dev workflows)
-    # FIX [LOW]: added tensorboard — referenced by 'make tensorboard' target but
+    # [LOW]: added tensorboard — referenced by 'make tensorboard' target but
     # was absent from all requirements files, causing the target to always fail.
     "tensorboard>=2.15.0",
 ]
@@ -213,7 +212,7 @@ Changelog = "https://github.com/yourusername/insurance-ml/blob/main/CHANGELOG.md
 # =====================================================
 # Entry Points - CLI Commands
 # =====================================================
-# FIX [HIGH]: insurance-train = "scripts.train_model:main" was removed.
+# [HIGH]: insurance-train = "scripts.train_model:main" was removed.
 #
 # Root cause: [tool.setuptools.packages.find] exclude = ["scripts*"] means
 # the scripts/ package is never installed into a wheel or sdist. Any user
@@ -247,7 +246,7 @@ exclude = ["tests*", "scripts*"]
 insurance_ml = [
     # py.typed marker — required for PEP 561 type-checking support
     "py.typed",
-    # FIX [MEDIUM]: configs/*.yaml and data/*.csv removed.
+    # [MEDIUM]: configs/*.yaml and data/*.csv removed.
     # These paths do not exist under src/insurance_ml/ — both directories
     # live at the project root. Package-data globs are resolved relative to
     # the installed package root (src/insurance_ml/), so these globs silently
@@ -384,7 +383,7 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
-# FIX [D8-P2]: Three-way inconsistency resolved. The actual enforced gate is
+# Three-way inconsistency resolved. The actual enforced gate is
 # fail_under = 30, applied by pytest-cov reading this section. The previous
 # state had three conflicting claims:
 #   ci.yml comments (3 locations): "--cov-fail-under=70"
@@ -414,8 +413,13 @@ exclude_dirs = [
     "/dist/"
 ]
 skips = [
-    "B101",  # assert_used
+    "B101",  # assert_used — internal invariants
+    "B110",  # try_except_pass — intentional swallow in logging/MLflow callbacks
+    "B112",  # try_except_continue — intentional in Optuna trial loop
+    "B404",  # import-subprocess — controlled internal use only
     "B601",  # paramiko_calls
+    "B603",  # subprocess_without_shell — all calls use fixed arg lists
+    "B607",  # start_process_with_partial_path — git/nvidia-smi are fixed system tools
 ]
 
 # =====================================================

@@ -114,28 +114,28 @@ class TransformConstants:
 
 def save_json(data: dict[str, Any], file_path: str) -> None:
     """Save dictionary to JSON file atomically"""
-    file_path = Path(file_path).resolve()
+    _fp = Path(file_path).resolve()
 
     try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        _fp.parent.mkdir(parents=True, exist_ok=True)
 
         fd, tmp_path = tempfile.mkstemp(
-            dir=file_path.parent, prefix=".tmp_json_", suffix=".json", text=True
+            dir=_fp.parent, prefix=".tmp_json_", suffix=".json", text=True
         )
 
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=2, default=_json_default_handler)
 
-            shutil.move(tmp_path, str(file_path))
-            logger.info(f"Data saved to {file_path}")
+            shutil.move(tmp_path, str(_fp))
+            logger.info(f"Data saved to {_fp}")
 
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
 
     except OSError as e:
-        raise FileOperationError(f"Error saving JSON to {file_path}: {e}") from e
+        raise FileOperationError(f"Error saving JSON to {_fp}: {e}") from e
     except (TypeError, ValueError) as e:
         raise FileOperationError(f"JSON serialization error: {e}") from e
 
@@ -159,7 +159,7 @@ def _json_default_handler(obj: Any) -> Any:
                 else None
             ),
         }
-    elif isinstance(obj, (np.integer, np.floating)):
+    elif isinstance(obj, np.integer | np.floating):
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
@@ -183,20 +183,20 @@ def _json_object_hook(obj: dict[str, Any]) -> Any:
 
 def load_json(file_path: str) -> dict[str, Any]:
     """Load dictionary from JSON file"""
-    file_path = Path(file_path).resolve()
+    _fp = Path(file_path).resolve()
 
-    if not file_path.exists():
-        raise FileNotFoundError(f"JSON file not found: {file_path}")
+    if not _fp.exists():
+        raise FileNotFoundError(f"JSON file not found: {_fp}")
 
     try:
-        with open(file_path) as f:
+        with open(_fp) as f:
             data: dict[str, Any] = json.load(f, object_hook=_json_object_hook)
-        logger.info(f"Data loaded from {file_path}")
+        logger.info(f"Data loaded from {_fp}")
         return data
     except json.JSONDecodeError as e:
-        raise FileOperationError(f"Invalid JSON in {file_path}: {e}") from e
+        raise FileOperationError(f"Invalid JSON in {_fp}: {e}") from e
     except OSError as e:
-        raise FileOperationError(f"Error reading {file_path}: {e}") from e
+        raise FileOperationError(f"Error reading {_fp}: {e}") from e
 
 
 def create_directories(directories: list[str]) -> None:
@@ -240,7 +240,7 @@ def set_plotting_style() -> None:
 
 def format_currency(amount: float | int) -> str:
     """Format number as currency"""
-    if not isinstance(amount, (int, float, np.number)):
+    if not isinstance(amount, int | float | np.number):
         raise TypeError(f"Amount must be numeric, got {type(amount)}")
 
     if not np.isfinite(amount):
@@ -251,7 +251,7 @@ def format_currency(amount: float | int) -> str:
 
 def format_percentage(value: float | int, decimals: int = 1) -> str:
     """Format number as percentage"""
-    if not isinstance(value, (int, float, np.number)):
+    if not isinstance(value, int | float | np.number):
         raise TypeError(f"Value must be numeric, got {type(value)}")
 
     if not np.isfinite(value):
@@ -444,9 +444,9 @@ class MetricsExtractor:
             "r2_b": float(r2_b),
             "mae_a": float(mae_a),
             "mae_b": float(mae_b),
-            # FIX-AUDIT-P6: is_better previously only checked RMSE, so it returned True
+            # is_better previously only checked RMSE, so it returned True
             # even when MAE or R² degraded.  The label in train.py said "RMSE+R² both
-            # improved" but the flag never verified R².  Fix: require BOTH RMSE and R²
+            # improved" but the flag never verified R². require BOTH RMSE and R²
             # to improve.  MAE is reported separately but not gating (MAE can degrade
             # slightly when the model corrects systematic high-value over-prediction,
             # which shifts the tail distribution in a way that reduces RMSE more than MAE).
@@ -495,7 +495,7 @@ class MetricsExtractor:
 
         # Validate finite values - but allow NaN for secondary metrics
         for key, value in metrics.items():
-            if isinstance(value, (int, float, np.number)):
+            if isinstance(value, int | float | np.number):
                 if not np.isfinite(value):
                     if key not in secondary_metrics:
                         # Primary metric is not finite - fatal error
@@ -510,8 +510,8 @@ class MetricsExtractor:
                         )
 
         # Validate R² is in reasonable range
-        r2 = MetricsExtractor.get_r2(metrics, default=None)
-        if r2 is not None and not (-1.0 <= r2 <= 1.0):
+        r2 = MetricsExtractor.get_r2(metrics, default=float("nan"))
+        if not (r2 != r2) and not (-1.0 <= r2 <= 1.0):  # r2!=r2 checks NaN
             logger.warning(
                 f"R² for '{context}' is outside typical range [-1, 1]: {r2:.4f}\n"
                 f"This may indicate a calculation error or extreme overfitting."
@@ -676,7 +676,7 @@ class MetricsExtractor:
         Returns:
             True if storage succeeded, False otherwise
         """
-        # ✅ CRITICAL FIX: Check if data already exists
+        # Check if data already exists
         if hasattr(model, "_conformal_data") and model._conformal_data is not None:
             if not force_overwrite:
                 existing_context = model._conformal_data.get("context", "unknown")
@@ -811,13 +811,13 @@ class TransformUtils:
         y_min, y_max = y_arr.min(), y_arr.max()
 
         if method == "log1p":
-            return y_min >= TransformConstants.LOG1P_EXPECTED_MIN and y_max < 20
+            return bool(y_min >= TransformConstants.LOG1P_EXPECTED_MIN and y_max < 20)
         elif method == "log":
-            return y_min >= 3 and y_max < 15
+            return bool(y_min >= 3 and y_max < 15)
         elif method == "boxcox":
-            return y_max < TransformConstants.SCALE_DETECTION_THRESHOLD
+            return bool(y_max < TransformConstants.SCALE_DETECTION_THRESHOLD)
         elif method == "yeo-johnson":
-            return (
+            return bool(
                 y_min >= TransformConstants.YEO_JOHNSON_EXPECTED_MIN
                 and y_max <= TransformConstants.YEO_JOHNSON_EXPECTED_MAX
             )
@@ -835,6 +835,7 @@ class TransformUtils:
             warnings.warn(
                 "⚠️ Input already appears to be in original scale. " "Skipping inverse transform.",
                 UserWarning,
+                stacklevel=2,
             )
             return y, True
 
@@ -896,8 +897,9 @@ class TransformUtils:
                     "in original scale; returning values unchanged (legacy "
                     "auto-correction).",
                     UserWarning,
+                    stacklevel=2,
                 )
-                return y_arr
+                return np.asarray(y_arr)
 
         # No transformation
         if method == "none":
@@ -908,7 +910,7 @@ class TransformUtils:
             result = np.expm1(y_arr)
             if clip_to_safe_range:
                 result = np.clip(result, 0, None)
-            return result
+            return np.asarray(result)
 
         # Box-Cox inverse
         elif method == "boxcox":
@@ -926,7 +928,7 @@ class TransformUtils:
             if clip_to_safe_range and result.min() < 0:
                 result = np.clip(result, 0, None)
 
-            return result
+            return np.asarray(result)
 
         # Yeo-Johnson inverse
         elif method == "yeo-johnson":
@@ -1008,9 +1010,9 @@ def make_json_serializable(
 
     if obj is None:
         return None
-    elif isinstance(obj, (bool, str)):
+    elif isinstance(obj, bool | str):
         return obj
-    elif isinstance(obj, (int, float)):
+    elif isinstance(obj, int | float):
         if not np.isfinite(obj):
             return None
         return obj
@@ -1035,7 +1037,7 @@ def make_json_serializable(
         return obj.isoformat()
     elif isinstance(obj, dict):
         return {str(k): make_json_serializable(v, max_depth, _depth + 1) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, list | tuple):
         return [make_json_serializable(item, max_depth, _depth + 1) for item in obj]
     elif isinstance(obj, set):
         return [make_json_serializable(item, max_depth, _depth + 1) for item in sorted(obj)]
@@ -1177,7 +1179,7 @@ def verify_yeo_johnson_transform() -> bool:
     """
     Verify Yeo-Johnson transformation
 
-    Fixed SciPy API usage: yeojohnson() returns single array when lmbda provided
+    yeojohnson() returns single array when lmbda provided
     """
     try:
         from scipy.stats import yeojohnson, yeojohnson_normmax
@@ -1247,7 +1249,7 @@ if __name__ == "__main__":
     # Test 1: Basic imports
     print("✓ All imports successful")
 
-    # Test 2: Verify inverse transform fix
+    # Test 2: Verify inverse transform
     print("\n" + "=" * 70)
     print("TEST 1: Verify Inverse Transform Fix (Log1p)")
     print("=" * 70)
@@ -1271,7 +1273,7 @@ if __name__ == "__main__":
     print("=" * 70)
     if _GPU_UTILS_AVAILABLE:
         gpu_available = check_gpu_available()
-        print(f"✅ GPU utilities imported successfully")
+        print("✅ GPU utilities imported successfully")
         print(f"   GPU available: {gpu_available}")
         if gpu_available:
             gpu_info = get_gpu_memory_usage()

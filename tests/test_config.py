@@ -27,8 +27,8 @@ from insurance_ml.config import (
     get_config_value,
     get_conformal_config,
     get_cv_config,
-    get_diagnostics_config,
     get_defaults,
+    get_diagnostics_config,
     get_explainability_config,
     get_feature_config,
     get_gpu_config,
@@ -45,7 +45,6 @@ from insurance_ml.config import (
     validate_gpu_config,
     validate_single_source_of_truth,
 )
-
 
 # ===========================================================================
 # load_config
@@ -77,9 +76,7 @@ class TestLoadConfig:
         assert "defaults" in cfg
         assert "cross_validation" in cfg
 
-    def test_returned_config_is_not_cached_between_calls(
-        self, config_yaml_path: Path
-    ) -> None:
+    def test_returned_config_is_not_cached_between_calls(self, config_yaml_path: Path) -> None:
         """Each call returns an independent dict — mutations don't bleed."""
         cfg1 = load_config(str(config_yaml_path))
         cfg2 = load_config(str(config_yaml_path))
@@ -132,9 +129,7 @@ class TestApplyEnvOverrides:
         result = _apply_env_overrides(mutable_config)
         assert result["defaults"]["random_state"] == original_rs
 
-    def test_environment_override(
-        self, mutable_config: dict[str, Any], monkeypatch
-    ) -> None:
+    def test_environment_override(self, mutable_config: dict[str, Any], monkeypatch) -> None:
         monkeypatch.setenv("ENVIRONMENT", "production")
         result = _apply_env_overrides(mutable_config)
         assert result["environment"] == "production"
@@ -180,21 +175,15 @@ class TestApplyEnvOverrides:
 
 @pytest.mark.unit
 class TestValidateConfig:
-    def test_passes_on_minimal_valid_config(
-        self, minimal_config: dict[str, Any]
-    ) -> None:
+    def test_passes_on_minimal_valid_config(self, minimal_config: dict[str, Any]) -> None:
         _validate_config(minimal_config)  # must not raise
 
-    def test_raises_on_missing_defaults(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_missing_defaults(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["defaults"]
         with pytest.raises(ValueError, match="missing required sections"):
             _validate_config(mutable_config)
 
-    def test_raises_on_missing_cross_validation(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_missing_cross_validation(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["cross_validation"]
         with pytest.raises(ValueError, match="missing required sections"):
             _validate_config(mutable_config)
@@ -204,9 +193,7 @@ class TestValidateConfig:
         with pytest.raises(ValueError, match="missing required sections"):
             _validate_config(mutable_config)
 
-    def test_raises_on_missing_hardware(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_missing_hardware(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["hardware"]
         with pytest.raises(ValueError, match="missing required sections"):
             _validate_config(mutable_config)
@@ -218,16 +205,12 @@ class TestValidateConfig:
         with pytest.raises(ValueError, match="Invalid target transform method"):
             _validate_config(mutable_config)
 
-    def test_raises_on_missing_defaults_random_state(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_missing_defaults_random_state(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["defaults"]["random_state"]
         with pytest.raises(ValueError, match="random_state"):
             _validate_config(mutable_config)
 
-    def test_raises_when_diagnostics_section_empty(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_diagnostics_section_empty(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["diagnostics"] = {}
         with pytest.raises(ValueError, match="diagnostics"):
             _validate_config(mutable_config)
@@ -256,21 +239,15 @@ class TestValidateConfig:
 
 @pytest.mark.unit
 class TestValidateSingleSourceOfTruth:
-    def test_passes_on_clean_config(
-        self, minimal_config: dict[str, Any]
-    ) -> None:
+    def test_passes_on_clean_config(self, minimal_config: dict[str, Any]) -> None:
         validate_single_source_of_truth(minimal_config)  # must not raise
 
-    def test_raises_when_model_has_cv_folds(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_model_has_cv_folds(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["model"]["cv_folds"] = 5
         with pytest.raises(ValueError, match="model.cv_folds"):
             validate_single_source_of_truth(mutable_config)
 
-    def test_raises_when_training_has_cv_folds(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_training_has_cv_folds(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["training"]["cv_folds"] = 5
         with pytest.raises(ValueError, match="training.cv_folds"):
             validate_single_source_of_truth(mutable_config)
@@ -290,9 +267,7 @@ class TestValidateSingleSourceOfTruth:
         with pytest.raises(ValueError, match="training.gpu_memory_fraction"):
             validate_single_source_of_truth(mutable_config)
 
-    def test_raises_when_optuna_has_gpu_memory_limit(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_optuna_has_gpu_memory_limit(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["optuna"]["gpu_memory_limit_mb"] = 3000
         with pytest.raises(ValueError, match="optuna.gpu_memory_limit_mb"):
             validate_single_source_of_truth(mutable_config)
@@ -312,9 +287,7 @@ class TestValidateSingleSourceOfTruth:
 
 @pytest.mark.unit
 class TestGetDefaults:
-    def test_returns_expected_keys(
-        self, minimal_config: dict[str, Any]
-    ) -> None:
+    def test_returns_expected_keys(self, minimal_config: dict[str, Any]) -> None:
         result = get_defaults(minimal_config)
         assert "random_state" in result
         assert "n_jobs" in result
@@ -323,16 +296,12 @@ class TestGetDefaults:
         with pytest.raises(ValueError, match="'defaults'"):
             get_defaults({})
 
-    def test_raises_when_random_state_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_random_state_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["defaults"]["random_state"]
         with pytest.raises(ValueError, match="random_state"):
             get_defaults(mutable_config)
 
-    def test_raises_when_n_jobs_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_n_jobs_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["defaults"]["n_jobs"]
         with pytest.raises(ValueError, match="n_jobs"):
             get_defaults(mutable_config)
@@ -350,9 +319,7 @@ class TestGetDefaults:
 
 @pytest.mark.unit
 class TestGetCvConfig:
-    def test_returns_expected_keys(
-        self, minimal_config: dict[str, Any]
-    ) -> None:
+    def test_returns_expected_keys(self, minimal_config: dict[str, Any]) -> None:
         result = get_cv_config(minimal_config)
         for key in ("n_folds", "shuffle", "stratified", "random_state"):
             assert key in result
@@ -361,9 +328,7 @@ class TestGetCvConfig:
         with pytest.raises(ValueError, match="'cross_validation'"):
             get_cv_config({})
 
-    def test_raises_when_n_folds_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_n_folds_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["cross_validation"]["n_folds"]
         with pytest.raises(ValueError, match="n_folds"):
             get_cv_config(mutable_config)
@@ -399,9 +364,7 @@ class TestGetHardwareConfig:
         assert result["gpu_model"] == "RTX-3050-test"
         assert result["max_safe_vram_mb"] == 3500
 
-    def test_raises_when_required_key_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_required_key_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["hardware"]["gpu_model"]
         with pytest.raises(ValueError, match="hardware section missing required keys"):
             get_hardware_config(mutable_config)
@@ -409,9 +372,7 @@ class TestGetHardwareConfig:
 
 @pytest.mark.unit
 class TestGetGpuConfig:
-    def test_disabled_gpu_returns_top_level_config(
-        self, minimal_config: dict[str, Any]
-    ) -> None:
+    def test_disabled_gpu_returns_top_level_config(self, minimal_config: dict[str, Any]) -> None:
         result = get_gpu_config(minimal_config)
         assert result["enabled"] is False
         assert result["memory_limit_mb"] == 3000
@@ -428,9 +389,7 @@ class TestGetGpuConfig:
         assert result["lightgbm_device"] == "gpu"
         assert result["xgboost_tree_method"] is None
 
-    def test_enabled_gpu_requires_xgboost_section(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_enabled_gpu_requires_xgboost_section(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["gpu"]["enabled"] = True
         del mutable_config["gpu"]["xgboost"]
         with pytest.raises(ValueError, match="gpu.xgboost section required"):
@@ -448,9 +407,7 @@ class TestExtractTrainingParams:
             "remove_collinear": False,
         }
 
-    def test_raises_when_target_transform_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_target_transform_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["features"]["target_transform"]["method"]
         with pytest.raises(ValueError, match="target_transform missing 'method'"):
             extract_training_params(mutable_config)
@@ -466,9 +423,7 @@ class TestGetFeatureConfig:
         assert result["children_max"] == 20
         assert result["enable_performance_logging"] is False
 
-    def test_raises_when_encoding_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_encoding_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["features"]["encoding"]
         with pytest.raises(ValueError, match="missing subsections"):
             get_feature_config(mutable_config)
@@ -479,9 +434,7 @@ class TestGetPredictionConfig:
     def test_returns_expected_keys(self, minimal_config: dict[str, Any]) -> None:
         assert get_prediction_config(minimal_config) == {"max_batch_size": 1000}
 
-    def test_raises_on_non_positive_batch_size(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_non_positive_batch_size(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["prediction"]["max_batch_size"] = 0
         with pytest.raises(ValueError, match="positive integer"):
             get_prediction_config(mutable_config)
@@ -493,9 +446,7 @@ class TestGetConformalConfig:
         result = get_conformal_config(minimal_config)
         assert result == {"calibration_split_ratio": 0.2}
 
-    def test_raises_on_ratio_out_of_range(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_on_ratio_out_of_range(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["conformal"]["calibration_split_ratio"] = 1.0
         with pytest.raises(ValueError, match="must be in \\(0, 1\\)"):
             get_conformal_config(mutable_config)
@@ -525,17 +476,13 @@ class TestGetTrainingConfig:
         assert result["checkpoint_enabled"] is False
         assert result["conformal_method"] == "heteroscedastic_conformal"
 
-    def test_defaults_random_state_is_canonical(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_defaults_random_state_is_canonical(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["defaults"]["random_state"] = 1234
         mutable_config["cross_validation"]["random_state"] = 9999
         result = get_training_config(mutable_config)
         assert result["random_state"] == 1234
 
-    def test_raises_when_checkpoint_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_checkpoint_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["training"]["checkpoint"]
         with pytest.raises(ValueError, match="training missing 'checkpoint'"):
             get_training_config(mutable_config)
@@ -551,9 +498,7 @@ class TestGetMlflowConfig:
         assert result["autolog_disable"] is True
         assert result["log_gpu_metrics"] is False
 
-    def test_raises_when_tracking_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_tracking_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["mlflow"]["tracking"]
         with pytest.raises(ValueError, match="mlflow missing 'tracking' section"):
             get_mlflow_config(mutable_config)
@@ -567,9 +512,7 @@ class TestGetHighValueConfig:
         assert result["threshold_percentile"] == 95
         assert result["report_format"] == "html"
 
-    def test_raises_when_reporting_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_reporting_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["high_value_analysis"]["reporting"]
         with pytest.raises(ValueError, match="missing 'reporting' section"):
             get_high_value_config(mutable_config)
@@ -585,9 +528,7 @@ class TestGetDiagnosticsConfig:
         assert result["generate_html_report"] is False
         assert result["shap_max_samples"] == 100
 
-    def test_raises_when_reports_missing(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_reports_missing(self, mutable_config: dict[str, Any]) -> None:
         del mutable_config["diagnostics"]["reports"]
         with pytest.raises(ValueError, match="diagnostics missing 'reports' section"):
             get_diagnostics_config(mutable_config)
@@ -602,9 +543,7 @@ class TestGetExplainabilityConfig:
         assert result["enable_shap"] is False
         assert result["shap_background_samples"] == 50
 
-    def test_raises_when_confidence_level_invalid(
-        self, mutable_config: dict[str, Any]
-    ) -> None:
+    def test_raises_when_confidence_level_invalid(self, mutable_config: dict[str, Any]) -> None:
         mutable_config["diagnostics"]["confidence_level"] = 1.0
         with pytest.raises(ValueError, match="confidence_level must be in \\(0, 1\\)"):
             get_explainability_config(mutable_config)
@@ -656,9 +595,9 @@ class TestMergeConfigs:
         base = {"section": {"x": 1, "y": 2}}
         override = {"section": {"y": 99, "z": 3}}
         result = merge_configs(base, override)
-        assert result["section"]["x"] == 1   # preserved from base
+        assert result["section"]["x"] == 1  # preserved from base
         assert result["section"]["y"] == 99  # overridden
-        assert result["section"]["z"] == 3   # added from override
+        assert result["section"]["z"] == 3  # added from override
 
     def test_base_not_mutated(self) -> None:
         base = {"a": {"nested": 1}}

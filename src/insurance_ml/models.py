@@ -1,15 +1,21 @@
 import hashlib
 import json
 import logging
+import os
+import platform
 import re
 import subprocess
 import sys
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
+
+if TYPE_CHECKING:
+    from insurance_ml.features import BiasCorrection
 
 import joblib
 import lightgbm as lgb
@@ -34,7 +40,7 @@ from insurance_ml.shared import TargetTransformation
 
 _GPU_AVAILABLE: bool | None = None
 _GPU_DETECTION_CACHE: dict[str, Any] | None = None
-_GPU_MEMORY_CACHE: dict[str, tuple[float, dict[str, float]]] = {}
+_GPU_MEMORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _GPU_MEMORY_CACHE_TTL: float = 1.0  # 1 second cache
 _GPU_LOCK = threading.Lock()  # Thread-safe GPU detection and cache writes
 
@@ -45,21 +51,6 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # ── Patch 03: Git Provenance + Artifact Integrity (G4, G5, G9) ───────────────
-import hashlib
-import json
-import logging
-import os
-import platform
-import subprocess
-import sys
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Optional
-
-import numpy as np
-
-logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -146,9 +137,9 @@ def capture_git_provenance(repo_root: Path | None = None) -> GitProvenance:
 
     # Dirty check
     status_out = _git("status", "--porcelain")
-    dirty_lines = [l for l in status_out.split("\n") if l.strip()] if status_out else []
+    dirty_lines = [line for line in status_out.split("\n") if line.strip()] if status_out else []
     is_dirty = len(dirty_lines) > 0
-    dirty_files = [l.strip() for l in dirty_lines[:20]]  # cap at 20 for readability
+    dirty_files = [line.strip() for line in dirty_lines[:20]]  # cap at 20 for readability
 
     # CI run ID (GitHub Actions, Jenkins, CircleCI)
     ci_run_id = (
@@ -166,7 +157,7 @@ def capture_git_provenance(repo_root: Path | None = None) -> GitProvenance:
         tags=tags,
         is_dirty=is_dirty,
         dirty_files=dirty_files,
-        capture_timestamp=datetime.now(timezone.utc).isoformat(),
+        capture_timestamp=datetime.now(UTC).isoformat(),
         python_version=sys.version,
         platform_info=platform.platform(),
         ci_run_id=ci_run_id,
@@ -217,8 +208,7 @@ class ProvenanceGate:
             Dict with g4_pass, g9_pass, messages.
         """
         g4_pass = (
-            provenance.commit_hash not in ("unknown", "", None)
-            and len(provenance.commit_hash) >= 7
+            provenance.commit_hash not in ("unknown", "", None) and len(provenance.commit_hash) >= 7
         )
         g9_pass = g4_pass  # G9 (random_state) is handled in save_model; G4 enables it
 
@@ -229,9 +219,7 @@ class ProvenanceGate:
                 "Model cannot be deployed without a traceable commit."
             )
         if require_clean and provenance.is_dirty:
-            messages.append(
-                f"G4 FAIL (clean required): {len(provenance.dirty_files)} dirty files."
-            )
+            messages.append(f"G4 FAIL (clean required): {len(provenance.dirty_files)} dirty files.")
             g4_pass = False
 
         result = {
@@ -243,9 +231,7 @@ class ProvenanceGate:
         }
 
         if not g4_pass and raise_on_fail:
-            raise ValueError(
-                f"❌ Gate G4 FAILED:\n" + "\n".join(f"  • {m}" for m in messages)
-            )
+            raise ValueError("❌ Gate G4 FAILED:\n" + "\n".join(f"  • {m}" for m in messages))
 
         gate_str = "✅ PASS" if g4_pass else "❌ FAIL"
         logger.info(f"Gate G4 [{gate_str}]: {provenance}")
@@ -329,9 +315,7 @@ def always_write_bias_correction(
         ]:
             val = getattr(bias_correction, attr, None)
             if val is not None:
-                params[attr] = (
-                    float(val) if isinstance(val, (int, float, np.number)) else val
-                )
+                params[attr] = float(val) if isinstance(val, int | float | np.number) else val
 
         artifact = BiasCorrectionArtifact(
             applied=True,
@@ -341,7 +325,7 @@ def always_write_bias_correction(
             correction_params=params,
             provenance=provenance.to_dict() if provenance else None,
             random_state=random_state,
-            training_timestamp=datetime.now(timezone.utc).isoformat(),
+            training_timestamp=datetime.now(UTC).isoformat(),
             pipeline_version=pipeline_version,
         )
     else:
@@ -363,13 +347,12 @@ def always_write_bias_correction(
             correction_params=None,
             provenance=provenance.to_dict() if provenance else None,
             random_state=random_state,
-            training_timestamp=datetime.now(timezone.utc).isoformat(),
+            training_timestamp=datetime.now(UTC).isoformat(),
             pipeline_version=pipeline_version,
         )
 
         logger.info(
-            f"ℹ️  Writing bias_correction.json stub (applied=False):\n"
-            f"   Reason: {reason}"
+            f"ℹ️  Writing bias_correction.json stub (applied=False):\n" f"   Reason: {reason}"
         )
 
     # ── Atomic write (temp → rename) ─────────────────────────────────────
@@ -378,9 +361,7 @@ def always_write_bias_correction(
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(artifact.to_dict(), f, indent=2, default=str)
         tmp_path.replace(out_path)
-        logger.info(
-            f"✅ bias_correction.json written: {out_path} (applied={artifact.applied})"
-        )
+        logger.info(f"✅ bias_correction.json written: {out_path} (applied={artifact.applied})")
     except Exception as e:
         logger.error(f"❌ Failed to write bias_correction.json: {e}")
         if tmp_path.exists():
@@ -468,9 +449,7 @@ class ArtifactManifest:
         gate_pass = len(missing) == 0
 
         if warnings:
-            logger.warning(
-                f"⚠️  Artifact metadata warnings (non-blocking):\n" + "\n".join(warnings)
-            )
+            logger.warning("⚠️  Artifact metadata warnings (non-blocking):\n" + "\n".join(warnings))
 
         if not gate_pass:
             msg = (
@@ -490,9 +469,7 @@ class ArtifactManifest:
         }
 
         if gate_pass:
-            logger.info(
-                f"✅ Artifact manifest valid ({len(present)} required fields present)"
-            )
+            logger.info(f"✅ Artifact manifest valid ({len(present)} required fields present)")
 
         return result
 
@@ -525,13 +502,6 @@ class ArtifactManifest:
 
 
 # ── Patch 04: MAPIE CQR Conformal Intervals (G3) ─────────────────────────────
-import logging
-from typing import Any, Optional
-
-import numpy as np
-import pandas as pd
-
-logger = logging.getLogger(__name__)
 
 # Hard limit: avg CI width / median(prediction) must not exceed this ratio
 MAX_WIDTH_RATIO: float = 2.0  # production hard cap
@@ -582,7 +552,7 @@ class CQRIntervalEstimator:
         self.target_coverage = target_coverage
         self._fitted = False
         self._xgb_params = xgb_params or {}
-        self._mapie = None
+        self._mapie: Any | None = None
         self._fallback_used = False
 
     def fit(
@@ -670,9 +640,7 @@ class CQRIntervalEstimator:
                 self._base_model = base_model
 
         except Exception as e:
-            logger.error(
-                f"CQR fitting failed: {e} — falling back to symmetric conformal"
-            )
+            logger.error(f"CQR fitting failed: {e} — falling back to symmetric conformal")
             self._fitted = True
             self._fallback_used = True
             if base_model is not None:
@@ -697,17 +665,15 @@ class CQRIntervalEstimator:
         if not self._fitted:
             raise RuntimeError("Call fit() before predict_intervals()")
 
-        if not self._fallback_used and self._mapie is not None:
+        if not self._fallback_used and self._mapie is not None:  # noqa
             # ── CQR path (MAPIE) ──────────────────────────────────────────
-            _, intervals_raw = self._mapie.predict(
-                X_test, alpha=1.0 - self.target_coverage
-            )
+            _, intervals_raw = self._mapie.predict(X_test, alpha=1.0 - self.target_coverage)
             # MAPIE returns shape (n, 1, 2) — squeeze to (n, 2)
             if intervals_raw.ndim == 3:
                 intervals = intervals_raw[:, :, 0].T  # (n, 2): [lower, upper]
             else:
                 intervals = intervals_raw  # already (n, 2)
-            return intervals
+            return np.asarray(intervals)
 
         else:
             # ── Symmetric conformal fallback ─────────────────────────────
@@ -728,9 +694,7 @@ class CQRIntervalEstimator:
                 upper = base_predictions + q
                 return np.column_stack([lower, upper])
             else:
-                raise RuntimeError(
-                    "No calibration data available for fallback conformal"
-                )
+                raise RuntimeError("No calibration data available for fallback conformal")
 
     def get_metrics(
         self,
@@ -768,9 +732,7 @@ class CQRIntervalEstimator:
         g3_pass = width_ratio is not None and width_ratio <= TARGET_WIDTH_RATIO
         hard_cap_ok = width_ratio is None or width_ratio <= MAX_WIDTH_RATIO
 
-        method = (
-            "cqr_mapie" if not self._fallback_used else "symmetric_conformal_fallback"
-        )
+        method = "cqr_mapie" if not self._fallback_used else "symmetric_conformal_fallback"
 
         metrics = {
             "method": method,
@@ -792,7 +754,7 @@ class CQRIntervalEstimator:
             f"  Avg Width:   ${avg_width:,.0f}\n"
             f"  Width Ratio: {width_ratio:.2f}x median (target ≤ {TARGET_WIDTH_RATIO}x)"
             if width_ratio
-            else f"  Width Ratio: N/A (original_scale_median not provided)"
+            else "  Width Ratio: N/A (original_scale_median not provided)"
         )
 
         if not hard_cap_ok:
@@ -1037,9 +999,7 @@ class CalibratedModel:
             ValueError: If base_model lacks predict() method
         """
         if not hasattr(base_model, "predict"):
-            raise ValueError(
-                f"base_model must have predict() method, got {type(base_model)}"
-            )
+            raise ValueError(f"base_model must have predict() method, got {type(base_model)}")
 
         supported_methods = {"isotonic", "linear"}
         if calibration_method not in supported_methods:
@@ -1050,7 +1010,7 @@ class CalibratedModel:
 
         self.base_model = base_model
         self.calibration_method = calibration_method
-        self.calibrator = None
+        self.calibrator: Any | None = None
         self._is_fitted = False
 
         logger.debug(
@@ -1088,8 +1048,7 @@ class CalibratedModel:
 
         if len(X_val) != len(y_val):
             raise ValueError(
-                f"Shape mismatch: X_val has {len(X_val)} rows, "
-                f"y_val has {len(y_val)} values"
+                f"Shape mismatch: X_val has {len(X_val)} rows, " f"y_val has {len(y_val)} values"
             )
 
         # Generate base predictions
@@ -1106,9 +1065,7 @@ class CalibratedModel:
 
             uncalibrated_rmse = np.sqrt(mean_squared_error(y_val, y_pred_val))
             calibrated_rmse = np.sqrt(mean_squared_error(y_val, y_calibrated))
-            improvement = (
-                (uncalibrated_rmse - calibrated_rmse) / uncalibrated_rmse
-            ) * 100
+            improvement = ((uncalibrated_rmse - calibrated_rmse) / uncalibrated_rmse) * 100
 
             logger.info(
                 f"✅ Calibration fitted:\n"
@@ -1124,7 +1081,7 @@ class CalibratedModel:
                 )
 
         elif self.calibration_method == "linear":
-            # NEW ISSUE A FIX: isotonic regression memorizes the 160-sample
+            # isotonic regression memorizes the 160-sample
             # calibration set in Yeo-Johnson space, learning a flat/squeezed
             # mapping in the sparse high-value tail.  After the nonlinear
             # inverse transform this inflates large errors even though the
@@ -1141,9 +1098,7 @@ class CalibratedModel:
                 coeffs, _, _, _ = np.linalg.lstsq(A, y_val_arr, rcond=None)
                 a, b = float(coeffs[0]), float(coeffs[1])
             except np.linalg.LinAlgError:
-                logger.warning(
-                    "⚠️  Linear calibration OLS failed — falling back to identity."
-                )
+                logger.warning("⚠️  Linear calibration OLS failed — falling back to identity.")
                 a, b = 1.0, 0.0
 
             # Enforce slope ≥ 0 (monotonicity) and clip extreme scale factors
@@ -1154,9 +1109,7 @@ class CalibratedModel:
             y_calibrated = a * y_pred_val + b
             uncalibrated_rmse = np.sqrt(mean_squared_error(y_val_arr, y_pred_val))
             calibrated_rmse = np.sqrt(mean_squared_error(y_val_arr, y_calibrated))
-            improvement = (
-                (uncalibrated_rmse - calibrated_rmse) / uncalibrated_rmse
-            ) * 100
+            improvement = ((uncalibrated_rmse - calibrated_rmse) / uncalibrated_rmse) * 100
 
             logger.info(
                 f"✅ Linear calibration fitted:\n"
@@ -1198,16 +1151,11 @@ class CalibratedModel:
         if self.calibrator is not None:
             # OPTIMIZATION: Remove unnecessary copy
             if not hasattr(self, "_calibration_logged"):
-                if (
-                    isinstance(self.calibrator, dict)
-                    and self.calibrator.get("type") == "linear"
-                ):
+                if isinstance(self.calibrator, dict) and self.calibrator.get("type") == "linear":
                     a = self.calibrator["a"]
                     b = self.calibrator["b"]
                     mean_shift = np.mean(
-                        a * y_pred[: min(100, len(y_pred))]
-                        + b
-                        - y_pred[: min(100, len(y_pred))]
+                        a * y_pred[: min(100, len(y_pred))] + b - y_pred[: min(100, len(y_pred))]
                     )
                 else:
                     mean_shift = np.mean(
@@ -1217,15 +1165,12 @@ class CalibratedModel:
                 logger.debug(f"Calibration applied: mean shift = {mean_shift:+.4f}")
                 self._calibration_logged = True
 
-            if (
-                isinstance(self.calibrator, dict)
-                and self.calibrator.get("type") == "linear"
-            ):
+            if isinstance(self.calibrator, dict) and self.calibrator.get("type") == "linear":
                 y_pred = self.calibrator["a"] * y_pred + self.calibrator["b"]
             else:
                 y_pred = self.calibrator.transform(y_pred)
 
-        return y_pred
+        return np.asarray(y_pred)
 
     def get_params(self, deep: bool = True) -> dict[str, Any]:
         """Get parameters (delegates to base model)."""
@@ -1233,13 +1178,10 @@ class CalibratedModel:
             params = self.base_model.get_params(deep=deep)
             params["calibration_method"] = self.calibration_method
             # Expose linear calibrator coefficients for logging/inspection
-            if (
-                isinstance(self.calibrator, dict)
-                and self.calibrator.get("type") == "linear"
-            ):
+            if isinstance(self.calibrator, dict) and self.calibrator.get("type") == "linear":
                 params["calibration_slope"] = self.calibrator["a"]
                 params["calibration_intercept"] = self.calibrator["b"]
-            return params
+            return dict(params)
         return {}
 
     def __getattr__(self, name: str) -> Any:
@@ -1258,15 +1200,15 @@ class CalibratedModel:
         ):
             raise AttributeError(f"CalibratedModel has no attribute '{name}'")
 
-        # ✅ FIX: Check base_model exists and delegate
+        # Check base_model exists and delegate
         try:
             base_model = object.__getattribute__(
                 self, "base_model"
             )  # Use object.__getattribute__ to avoid recursion
-        except AttributeError:
+        except AttributeError as exc:
             raise AttributeError(
                 f"CalibratedModel has no attribute '{name}' (base_model not initialized)"
-            )
+            ) from exc
 
         # ✅ Delegate to base_model (this will raise AttributeError if not found)
         return getattr(base_model, name)
@@ -1358,9 +1300,7 @@ class ExplainabilityConfig:
         self.save_path = save_path
 
         if not 0 < confidence_level < 1:
-            raise ValueError(
-                f"confidence_level must be in (0, 1), got {confidence_level}"
-            )
+            raise ValueError(f"confidence_level must be in (0, 1), got {confidence_level}")
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "ExplainabilityConfig":
@@ -1368,9 +1308,7 @@ class ExplainabilityConfig:
         diag_config = config.get("diagnostics", {})
 
         return cls(
-            enable_confidence_intervals=diag_config.get(
-                "enable_confidence_intervals", True
-            ),
+            enable_confidence_intervals=diag_config.get("enable_confidence_intervals", True),
             confidence_level=diag_config.get("confidence_level", 0.95),
             enable_shap=diag_config.get("enable_shap", True),
             shap_max_samples=diag_config.get("shap_max_samples", 1000),
@@ -1393,7 +1331,7 @@ class ModelExplainer:
     _SHAP_EXPLAINER_CACHE: OrderedDict[str, Any] = OrderedDict()
     _MAX_CACHE_SIZE: int = 10  # Keep only 10 most recent explainers
     _CACHE_LOCK = threading.Lock()
-    # FIX U-05: _current_explaining_model is a per-call communication channel
+    # _current_explaining_model is a per-call communication channel
     # between explain_predictions() and _calculate_conformal_intervals().  Without
     # a lock, two concurrent explain_predictions() calls on the same ModelExplainer
     # instance (e.g. parallel CV folds) overwrite each other's reference, causing
@@ -1473,7 +1411,9 @@ class ModelExplainer:
             if X is not None:
                 # OPTIMIZATION: Use shape + column hash instead of data hash
                 shape_str = f"{X.shape[0]}x{X.shape[1]}"
-                col_hash = hashlib.md5("|".join(X.columns).encode()).hexdigest()[:8]
+                col_hash = hashlib.md5(
+                    "|".join(X.columns).encode(), usedforsecurity=False
+                ).hexdigest()[:8]
 
                 # Only hash first 10 rows if dataset is large
                 if X.shape[0] > 10:
@@ -1481,16 +1421,22 @@ class ModelExplainer:
                 else:
                     data_sample = X
 
-                data_hash = hashlib.md5(data_sample.to_numpy().tobytes()).hexdigest()[
-                    :8
-                ]
+                data_hash = hashlib.md5(
+                    data_sample.to_numpy().tobytes(), usedforsecurity=False
+                ).hexdigest()[:8]
 
-                # OT-02 FIX: hash() is PYTHONHASHSEED-dependent — use hashlib.md5
+                # hash() is PYTHONHASHSEED-dependent — use hashlib.md5
                 # for a deterministic key that survives restarts and multiprocessing.
-                _param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
-                cache_key = f"{model_type}_{model_id}_{_param_hash}_{shape_str}_{col_hash}_{data_hash}"
+                _param_hash = hashlib.md5(param_str.encode(), usedforsecurity=False).hexdigest()[
+                    :16
+                ]
+                cache_key = (
+                    f"{model_type}_{model_id}_{_param_hash}_{shape_str}_{col_hash}_{data_hash}"
+                )
             else:
-                _param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+                _param_hash = hashlib.md5(param_str.encode(), usedforsecurity=False).hexdigest()[
+                    :16
+                ]
                 cache_key = f"{model_type}_{model_id}_{_param_hash}"
 
             return cache_key
@@ -1578,18 +1524,14 @@ class ModelExplainer:
                 import xgboost as _xgb
 
                 if hasattr(self.model, "get_booster"):
-                    _arr = (
-                        X_test.values
-                        if hasattr(X_test, "values")
-                        else np.asarray(X_test)
-                    )
+                    _arr = X_test.values if hasattr(X_test, "values") else np.asarray(X_test)
                     predictions = self.model.get_booster().predict(_xgb.DMatrix(_arr))
                 else:
                     predictions = self.model.predict(X_test)
             except Exception:
                 predictions = self.model.predict(X_test)
 
-        results = {
+        results: dict[str, Any] = {
             "predictions": predictions,
             "confidence_intervals": None,
             "shap_values": None,
@@ -1607,9 +1549,7 @@ class ModelExplainer:
             validation_residuals = None
             if hasattr(self.model, "_validation_residuals"):
                 validation_residuals = self.model._validation_residuals
-                logger.info(
-                    f"   Using {len(validation_residuals)} validation residuals"
-                )
+                logger.info(f"   Using {len(validation_residuals)} validation residuals")
 
             if validation_residuals is None:
                 logger.error(
@@ -1621,13 +1561,13 @@ class ModelExplainer:
             else:
                 # Step 2: Get validation predictions (for heteroscedastic mode).
                 #
-                # FIX-7: CONFORMAL LEAKAGE — previous code preferred
+                # CONFORMAL LEAKAGE — previous code preferred
                 # _full_validation_predictions (268 samples = calibration 160 + holdout 108).
                 # Conformal quantile fitted on 268 residuals (incl. holdout) then evaluated
                 # on the same 108 holdout = CIRCULAR. Coverage inflated: 99.3% reported
                 # vs true ~96-97%; finite-sample guarantee invalidated.
                 #
-                # Fix: use ONLY _validation_predictions (160-sample calibration split).
+                # use ONLY _validation_predictions (160-sample calibration split).
                 # This is the set written by store_conformal_data() from X_calib only.
                 # Coverage guarantee is now honest and non-circular.
                 # Slight trade-off: fewer heteroscedastic bins (160//30=5 vs 268//30=8)
@@ -1635,7 +1575,7 @@ class ModelExplainer:
                 #
                 # _full_validation_predictions intentionally excluded from search.
                 validation_predictions = None
-                for _attr in ("_validation_predictions",):  # FIX-7: _full_val excluded
+                for _attr in ("_validation_predictions",):  # _full_val excluded
                     if hasattr(self.model, _attr):
                         _candidate = getattr(self.model, _attr)
                         if _candidate is not None:
@@ -1645,23 +1585,21 @@ class ModelExplainer:
                 if validation_predictions is not None:
                     logger.info(
                         f"   Using {len(validation_predictions)} validation predictions "
-                        f"(calibration split only, heteroscedastic mode — FIX-7)"
+                        f"(calibration split only, heteroscedastic mode)"
                     )
                 else:
-                    logger.info(
-                        "   Validation predictions not cached, using global intervals"
-                    )
+                    logger.info("   Validation predictions not cached, using global intervals")
 
                 # Step 3: Calculate intervals in TRANSFORMED space
-                # C1 FIX: expose model reference so _calculate_conformal_intervals
+                # expose model reference so _calculate_conformal_intervals
                 # can persist heteroscedastic bins into _conformal_data.
-                # M1 FIX: wrap in try/finally to guarantee the reference is cleared
+                # wrap in try/finally to guarantee the reference is cleared
                 # after the call returns (or raises).  Without this, if explain_predictions
                 # is called sequentially on two different models and the second call
                 # raises mid-execution, _current_explaining_model still points at the
                 # first model — _calculate_conformal_intervals would then write the
                 # second model's bins into the first model's _conformal_data.
-                # FIX U-05: acquire _EXPLAIN_LOCK before setting _current_explaining_model
+                # acquire _EXPLAIN_LOCK before setting _current_explaining_model
                 # to prevent concurrent explain_predictions() calls from overwriting each
                 # other's reference and corrupting _conformal_data across models.
                 with self._EXPLAIN_LOCK:
@@ -1678,14 +1616,12 @@ class ModelExplainer:
                             )
                         )
                     finally:
-                        self._current_explaining_model = None  # M1 FIX: always release
+                        self._current_explaining_model = None
 
                 # Step 4: Inverse transform to ORIGINAL scale
                 if target_transformation and target_transformation.method != "none":
                     if feature_engineer is None:
-                        raise ValueError(
-                            "feature_engineer required for inverse transform"
-                        )
+                        raise ValueError("feature_engineer required for inverse transform")
 
                     # Transform lower bound
                     lower_original = feature_engineer.inverse_transform_target(
@@ -1715,6 +1651,7 @@ class ModelExplainer:
                 if y_test is not None:
                     # Get y_test in original scale
                     if target_transformation and target_transformation.method != "none":
+                        assert feature_engineer is not None
                         y_test_original = feature_engineer.inverse_transform_target(
                             y_test.values if hasattr(y_test, "values") else y_test,
                             transformation_method=target_transformation.method,
@@ -1722,9 +1659,7 @@ class ModelExplainer:
                             context="conformal_validation",
                         )
                     else:
-                        y_test_original = (
-                            y_test.values if hasattr(y_test, "values") else y_test
-                        )
+                        y_test_original = y_test.values if hasattr(y_test, "values") else y_test
 
                     # Calculate coverage
                     within = (y_test_original >= intervals[:, 0]) & (
@@ -1747,9 +1682,7 @@ class ModelExplainer:
                     for name, mask in segments.items():
                         if mask.sum() > 0:
                             seg_cov = float(np.mean(within[mask]) * 100)
-                            seg_width = float(
-                                np.mean(intervals[mask, 1] - intervals[mask, 0])
-                            )
+                            seg_width = float(np.mean(intervals[mask, 1] - intervals[mask, 0]))
                             interval_metrics[f"{name}_coverage_pct"] = seg_cov
                             interval_metrics[f"{name}_avg_width"] = seg_width
                             interval_metrics[f"{name}_n_samples"] = int(mask.sum())
@@ -1807,9 +1740,7 @@ class ModelExplainer:
             results["feature_importance"] = shap_results["importance_df"]
 
             if self.config.auto_plot and self.config.save_path:
-                results["plots"]["shap_summary"] = self._plot_shap_summary(
-                    shap_results, X_test
-                )
+                results["plots"]["shap_summary"] = self._plot_shap_summary(shap_results, X_test)
 
         # 3. Uncertainty Visualization (updated to use corrected intervals)
         if (
@@ -1818,9 +1749,9 @@ class ModelExplainer:
             and results["confidence_intervals"] is not None
             and y_test is not None
         ):
-
             # Inverse transform predictions and y_test for plotting
             if target_transformation and target_transformation.method != "none":
+                assert feature_engineer is not None
                 predictions_original = feature_engineer.inverse_transform_target(
                     predictions,
                     transformation_method=target_transformation.method,
@@ -1839,15 +1770,13 @@ class ModelExplainer:
                 y_test_original = y_test.values if hasattr(y_test, "values") else y_test
 
             results["plots"]["uncertainty"] = self._plot_uncertainty(
-                predictions_original, results["confidence_intervals"], y_test_original
+                predictions_original, np.asarray(results["confidence_intervals"]), y_test_original
             )
 
         logger.info(f"✅ Explanations complete for {len(X_test)} samples")
         return results
 
-    def _calculate_intervals(
-        self, X: pd.DataFrame, predictions: np.ndarray
-    ) -> np.ndarray:
+    def _calculate_intervals(self, X: pd.DataFrame, predictions: np.ndarray) -> np.ndarray:
         """
         Calculate prediction intervals ( Proper unit handling).
 
@@ -1855,8 +1784,7 @@ class ModelExplainer:
         inverse-transformed to original space for proper interpretation.
         """
         logger.info(
-            f"📊 Calculating {self.config.confidence_level*100:.0f}% "
-            f"confidence intervals..."
+            f"📊 Calculating {self.config.confidence_level*100:.0f}% " f"confidence intervals..."
         )
 
         # Random Forest: Use tree variance
@@ -1871,7 +1799,6 @@ class ModelExplainer:
             "LGBMRegressor",
             "GradientBoostingRegressor",
         ]:
-
             # Check if model has validation residuals stored
             if hasattr(self.model, "_validation_residuals"):
                 logger.debug("Using empirical residual-based intervals")
@@ -1879,9 +1806,7 @@ class ModelExplainer:
                     predictions, residuals=self.model._validation_residuals
                 )
             else:
-                logger.debug(
-                    "Using percentage-based intervals (no validation residuals)"
-                )
+                logger.debug("Using percentage-based intervals (no validation residuals)")
                 intervals = self._intervals_gradient_boosting(predictions)
 
             # Log in correct units
@@ -2237,9 +2162,9 @@ class ModelExplainer:
         n_bins: int = 10,
         min_samples_per_bin: int = 30,
         winsor_pct: int = 99,
-    ) -> "Optional[Dict]":
+    ) -> "dict | None":
         """
-        T1 FIX: Single source of truth for heteroscedastic bin computation.
+        Single source of truth for heteroscedastic bin computation.
 
         Previously this logic was duplicated verbatim in two places:
           1. train.py  lines ~3460-3575  (pre-save path, runs before save_model)
@@ -2284,11 +2209,9 @@ class ModelExplainer:
         winsor_cap = float(np.percentile(conformity_scores, winsor_pct))
 
         q_level = min(1.0, np.ceil((n_cal + 1) * (1 - alpha)) / n_cal)
-        global_quantile = float(
-            np.quantile(conformity_scores, q_level, method="higher")
-        )
+        global_quantile = float(np.quantile(conformity_scores, q_level, method="higher"))
 
-        # Asymmetric upper/lower quantiles (FIX-3 from _calculate_conformal_intervals)
+        # Asymmetric upper/lower quantiles
         _pos = residuals[residuals > 0]
         _neg = -residuals[residuals < 0]
         q_upper = (
@@ -2317,9 +2240,7 @@ class ModelExplainer:
             if i == 0:
                 mask = predictions <= iv.right
             else:
-                mask = (predictions > bin_edges[i - 1].right) & (
-                    predictions <= iv.right
-                )
+                mask = (predictions > bin_edges[i - 1].right) & (predictions <= iv.right)
 
             bin_scores = conformity_scores[mask]
 
@@ -2336,12 +2257,8 @@ class ModelExplainer:
             "bin_right_edges": [float(iv.right) for iv in bin_edges],
             "bin_quantiles": local_qs,
             "outlier_cap": float(winsor_cap),
-            "asym_upper_ratio": float(
-                q_upper / global_quantile if global_quantile > 0 else 1.0
-            ),
-            "asym_lower_ratio": float(
-                q_lower / global_quantile if global_quantile > 0 else 1.0
-            ),
+            "asym_upper_ratio": float(q_upper / global_quantile if global_quantile > 0 else 1.0),
+            "asym_lower_ratio": float(q_lower / global_quantile if global_quantile > 0 else 1.0),
             "n_bins": len(local_qs),
             "global_quantile": float(global_quantile),
             "alpha": float(alpha),
@@ -2352,7 +2269,7 @@ class ModelExplainer:
         predictions_transformed: np.ndarray,
         validation_residuals: np.ndarray,
         validation_predictions: np.ndarray | None = None,
-        # FIX F-08: default was 0.95, diverging from the operational level used
+        # default was 0.95, diverging from the operational level used
         # everywhere else (routes.py _CI_CONFIDENCE_LEVEL=0.90, evaluate.py
         # check_ci_coverage confidence_level=0.90, config.yaml confidence_level=0.90).
         # Any call site omitting target_coverage silently computed 95% intervals —
@@ -2425,20 +2342,18 @@ class ModelExplainer:
             method="higher",  # CRITICAL: ensures coverage guarantee
         )
 
-        # FIX-3: ASYMMETRIC global quantiles for skewed insurance residuals.
+        # ASYMMETRIC global quantiles for skewed insurance residuals.
         # Residuals are right-skewed (skew ~+2.7, kurt ~+7.6): the positive tail
         # (underpredictions) is much larger than the negative tail (overpredictions).
         # Symmetric +/- global_quantile uses the large positive tail to set BOTH
         # bounds, making the lower bound unnecessarily conservative and inflating
         # avg CI width to ~$26K on a ~$10K median prediction (271% relative width).
         #
-        # Fix: compute separate q_upper (underprediction: residuals > 0) and
+        # compute separate q_upper (underprediction: residuals > 0) and
         #      q_lower (overprediction: abs(residuals < 0)) quantile scalars.
         # When either tail has <10 samples, fall back to the symmetric global_quantile.
         _pos_res = validation_residuals[validation_residuals > 0]  # y_true > y_pred
-        _neg_res = -validation_residuals[
-            validation_residuals < 0
-        ]  # y_true < y_pred (abs)
+        _neg_res = -validation_residuals[validation_residuals < 0]  # y_true < y_pred (abs)
 
         q_upper_global = (
             float(np.quantile(_pos_res, q_level_global, method="higher"))
@@ -2467,12 +2382,12 @@ class ModelExplainer:
         # unreliable for n<39. We therefore clamp n_bins so each bin gets
         # at least MIN_SAMPLES_PER_BIN samples before proceeding.
         #
-        # ISSUE F/G FIX — 99th-percentile outlier cap on per-bin quantiles:
+        # 99th-percentile outlier cap on per-bin quantiles:
         # np.quantile(..., method="higher") at q_level≈0.975 selects the MAX
         # of a ~40-sample bin.  A single extreme residual (e.g. Sample 22 YJ
         # residual=3.32) therefore becomes the local_q for all high-value test
         # points, inflating avg CI width to ~$49 k.
-        # Fix: cap each local_q at the 95th pctile of the FULL calibration set.
+        # cap each local_q at the 95th pctile of the FULL calibration set.
         # global_quantile is left uncapped to preserve the coverage guarantee.
         # v7.5.5: lowered from 99 → 95 to match the train.py pre-save path
         # (winsor_pct=95 at line 3639). Mismatched values meant the explain-path
@@ -2508,7 +2423,7 @@ class ModelExplainer:
                 validation_residuals = validation_residuals[:n_use]
                 validation_predictions = validation_predictions[:n_use]
                 n_cal = n_use
-                # BUG FIX (Bug 2): conformity_scores was computed from the original
+                # conformity_scores was computed from the original
                 # full-length validation_residuals at the top of this method.  After
                 # trimming, the boolean masks produced from validation_predictions
                 # (160 elements) would be applied to a 268-element conformity_scores
@@ -2517,9 +2432,7 @@ class ModelExplainer:
                 # downstream calculation is consistent with the trimmed arrays.
                 conformity_scores = np.abs(validation_residuals)
                 q_level_global = min(1.0, np.ceil((n_cal + 1) * (1 - alpha)) / n_cal)
-                global_quantile = np.quantile(
-                    conformity_scores, q_level_global, method="higher"
-                )
+                global_quantile = np.quantile(conformity_scores, q_level_global, method="higher")
                 logger.info(
                     f"✅ Conformal quantile recomputed after alignment: "
                     f"{global_quantile:.4f} (level={q_level_global:.4f}, n_cal={n_cal})"
@@ -2527,7 +2440,7 @@ class ModelExplainer:
                 # Fall through to heteroscedastic path below — no downgrade to global.
 
             # ----------------------------------------------------------------
-            # T1 FIX: Bin computation now delegates to compute_heteroscedastic_bins
+            # Bin computation now delegates to compute_heteroscedastic_bins
             # (the canonical static method added above), eliminating the verbatim
             # duplication that previously existed between this path and train.py.
             # The method returns a ready-to-store bin_data dict or None on failure.
@@ -2559,7 +2472,7 @@ class ModelExplainer:
                     f"{_hetero_bin_data['outlier_cap']:.4f}"
                 )
 
-                # ── Persist bins into _conformal_data (C1 FIX) ─────────────
+                # ── Persist bins into _conformal_data ─────────────
                 # _current_explaining_model is set (and cleared via finally) by
                 # explain_predictions() before this method is called.
                 try:
@@ -2572,25 +2485,18 @@ class ModelExplainer:
                     else:
                         if not hasattr(_target_conformal, "_conformal_data"):
                             _target_conformal._conformal_data = {}
-                        _target_conformal._conformal_data["heteroscedastic_bins"] = (
-                            _hetero_bin_data
-                        )
+                        _target_conformal._conformal_data["heteroscedastic_bins"] = _hetero_bin_data
                         logger.info(
                             f"✅ Stored heteroscedastic bins in _conformal_data "
                             f"({_hetero_bin_data['n_bins']} bins, will persist via save_model)"
                         )
                 except Exception as _bin_store_err:
-                    logger.warning(
-                        f"⚠️  Could not persist heteroscedastic bins: {_bin_store_err}"
-                    )
+                    logger.warning(f"⚠️  Could not persist heteroscedastic bins: {_bin_store_err}")
 
                 # Always include in metrics for downstream callers
-                metrics_extra = _hetero_bin_data
 
                 # Assign test predictions to bins using stored right edges
-                quantile_values = np.full(
-                    len(predictions_transformed), local_quantiles[-1]
-                )
+                quantile_values = np.full(len(predictions_transformed), local_quantiles[-1])
                 for i, pred in enumerate(predictions_transformed):
                     for j, right_edge in enumerate(bin_right_edges):
                         if pred <= right_edge:
@@ -2600,17 +2506,13 @@ class ModelExplainer:
                 method = "heteroscedastic_conformal"
 
             except Exception as e:
-                logger.warning(
-                    f"⚠️  Heteroscedastic fitting failed: {e}. Using global quantile."
-                )
+                logger.warning(f"⚠️  Heteroscedastic fitting failed: {e}. Using global quantile.")
                 quantile_values = np.full(len(predictions_transformed), global_quantile)
                 method = "global_conformal"
         else:
             # Global intervals
             if use_heteroscedastic and validation_predictions is None:
-                logger.info(
-                    "ℹ️  Validation predictions not provided, using global intervals"
-                )
+                logger.info("ℹ️  Validation predictions not provided, using global intervals")
             elif use_heteroscedastic and n_cal < 50:
                 logger.info(f"ℹ️  n_cal={n_cal} < 50, using global intervals")
 
@@ -2618,19 +2520,15 @@ class ModelExplainer:
             method = "global_conformal"
 
         # ====================================================================
-        # CONSTRUCT INTERVALS (FIX-3: asymmetric around prediction)
+        # CONSTRUCT INTERVALS (asymmetric around prediction)
         # ====================================================================
         # quantile_values holds per-bin half-widths (heteroscedastic) or the
         # single global_quantile (global fallback). Scale upper/lower separately
         # using the ratio of the asymmetric globals to the symmetric global.
         # When q_upper_global == q_lower_global (fallback), ratios are both 1.0
         # and the behaviour is identical to the original symmetric construction.
-        _asym_upper_ratio = (
-            q_upper_global / global_quantile if global_quantile > 0 else 1.0
-        )
-        _asym_lower_ratio = (
-            q_lower_global / global_quantile if global_quantile > 0 else 1.0
-        )
+        _asym_upper_ratio = q_upper_global / global_quantile if global_quantile > 0 else 1.0
+        _asym_lower_ratio = q_lower_global / global_quantile if global_quantile > 0 else 1.0
 
         upper_values = quantile_values * _asym_upper_ratio
         lower_values = quantile_values * _asym_lower_ratio
@@ -2643,7 +2541,7 @@ class ModelExplainer:
         # ====================================================================
         # METRICS
         # ====================================================================
-        metrics = {
+        metrics: dict[str, Any] = {
             "method": method,
             "alpha": float(alpha),
             # Heteroscedastic bin data for inference-time CI replication
@@ -2666,9 +2564,7 @@ class ModelExplainer:
             "n_bins_requested": int(n_bins),
             "n_bins_effective": int(
                 max(1, min(n_bins, n_cal // _MIN_SAMPLES_PER_BIN))
-                if use_heteroscedastic
-                and validation_predictions is not None
-                and n_cal >= 50
+                if use_heteroscedastic and validation_predictions is not None and n_cal >= 50
                 else 1
             ),
         }
@@ -2693,7 +2589,7 @@ class ModelExplainer:
         X_test,
         y_test,
         target_coverage: float = 0.90,
-        original_scale_median: float = None,
+        original_scale_median: float | None = None,
     ):
         """
         PATCH 04 (G3): CQR via MAPIE — drop-in for _calculate_conformal_intervals.
@@ -2711,31 +2607,26 @@ class ModelExplainer:
                 guardrail = WidthGuardrail.check(
                     intervals, base_model.predict(X_test), raise_on_hard_cap=False
                 )
-                metrics = estimator.get_metrics(
-                    y_test, intervals, original_scale_median
-                )
+                metrics = estimator.get_metrics(y_test, intervals, original_scale_median)
                 metrics.update(guardrail)
                 return intervals, metrics
             except Exception as _e:
-                logger.warning(
-                    f"⚠️  CQR failed ({_e}) — falling back to symmetric conformal"
-                )
+                logger.warning(f"⚠️  CQR failed ({_e}) — falling back to symmetric conformal")
 
         # Symmetric conformal fallback (no extra dependencies)
-        # FIX U-13: previous code called base_model.predict(X_test) twice —
+        # previous code called base_model.predict(X_test) twice —
         # once to pass to _calculate_conformal_intervals, then again inside
         # that method for the heteroscedastic binning.  Cache the result.
         y_pred_calib = base_model.predict(X_calib)
         y_pred_test = base_model.predict(X_test)  # cached — used once below
-        residuals = (
-            y_calib.values if hasattr(y_calib, "values") else y_calib
-        ) - y_pred_calib
-        intervals, metrics = self._calculate_conformal_intervals(
+        residuals = (y_calib.values if hasattr(y_calib, "values") else y_calib) - y_pred_calib
+        intervals, _metrics_raw = self._calculate_conformal_intervals(
             predictions_transformed=y_pred_test,
             validation_residuals=residuals,
             validation_predictions=y_pred_calib,
             target_coverage=target_coverage,
         )
+        metrics = dict(_metrics_raw)
         metrics["method"] = "symmetric_conformal_fallback"
         return intervals, metrics
 
@@ -2811,12 +2702,8 @@ class ModelExplainer:
         avg_width = np.mean(upper - lower)
 
         # Always log in transformed scale (no dollar signs)
-        logger.info(
-            f"   GBM intervals: avg width = {avg_width:.2f} (transformed scale)"
-        )
-        logger.debug(
-            f"   Prediction range: [{predictions.min():.2f}, {predictions.max():.2f}]"
-        )
+        logger.info(f"   GBM intervals: avg width = {avg_width:.2f} (transformed scale)")
+        logger.debug(f"   Prediction range: [{predictions.min():.2f}, {predictions.max():.2f}]")
 
         return intervals
 
@@ -2909,12 +2796,9 @@ class ModelExplainer:
         # Sample test set if too large
         if len(X_test) > self.config.shap_max_samples:
             logger.info(
-                f"Sampling {self.config.shap_max_samples} of "
-                f"{len(X_test)} samples for SHAP"
+                f"Sampling {self.config.shap_max_samples} of " f"{len(X_test)} samples for SHAP"
             )
-            X_shap = X_test.sample(
-                n=self.config.shap_max_samples, random_state=self.random_state
-            )
+            X_shap = X_test.sample(n=self.config.shap_max_samples, random_state=self.random_state)
         else:
             X_shap = X_test
 
@@ -2961,7 +2845,7 @@ class ModelExplainer:
             ]:
                 logger.info("   Creating TreeExplainer (optimized)...")
                 try:
-                    # Fix 2a — XGBoost 3.1.1 stores base_score in-memory as a bracketed
+                    # XGBoost 3.1.1 stores base_score in-memory as a bracketed
                     # scientific-notation string e.g. '[1.16E1]'.  SHAP's XGBTreeModelLoader
                     # calls float() on it and raises ValueError.
                     #
@@ -2997,9 +2881,7 @@ class ModelExplainer:
                                 ) as _tf:
                                     _tmp_path = _tf.name
                                 try:
-                                    _booster.save_model(
-                                        _tmp_path
-                                    )  # plain float in JSON
+                                    _booster.save_model(_tmp_path)  # plain float in JSON
                                     _clean = _xgb.Booster()
                                     _clean.load_model(_tmp_path)  # loads clean state
                                     _shap_target = _clean
@@ -3078,17 +2960,13 @@ class ModelExplainer:
                 )
 
                 if X_train_sample is not None:
-                    bg_size = min(
-                        self.config.shap_background_samples, len(X_train_sample)
-                    )
+                    bg_size = min(self.config.shap_background_samples, len(X_train_sample))
                     background = shap.sample(
                         X_train_sample, bg_size, random_state=self.random_state
                     )
                 else:
                     bg_size = min(self.config.shap_background_samples, len(X_shap))
-                    background = shap.sample(
-                        X_shap, bg_size, random_state=self.random_state
-                    )
+                    background = shap.sample(X_shap, bg_size, random_state=self.random_state)
 
                 explainer = shap.KernelExplainer(actual_model.predict, background)
                 logger.info(f"   KernelExplainer initialized (bg_size={bg_size})")
@@ -3121,7 +2999,7 @@ class ModelExplainer:
             {"feature": X_shap.columns, "importance": np.abs(shap_values).mean(axis=0)}
         ).sort_values("importance", ascending=False)
 
-        logger.info(f"✅ SHAP values calculated")
+        logger.info("✅ SHAP values calculated")
         logger.info(
             f"   Top feature: {importance_df.iloc[0]['feature']} "
             f"(importance={importance_df.iloc[0]['importance']:.4f})"
@@ -3134,9 +3012,7 @@ class ModelExplainer:
             "X_shap": X_shap,
         }
 
-    def _plot_shap_summary(
-        self, shap_results: dict[str, Any], X_test: pd.DataFrame
-    ) -> str:
+    def _plot_shap_summary(self, shap_results: dict[str, Any], X_test: pd.DataFrame) -> str | None:
         """Generate SHAP summary plots"""
         try:
             import matplotlib.pyplot as plt
@@ -3145,6 +3021,8 @@ class ModelExplainer:
             logger.error("Cannot generate SHAP plots: matplotlib not installed")
             return None
 
+        if self.config.save_path is None:
+            return None
         save_path = Path(self.config.save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 
@@ -3173,10 +3051,12 @@ class ModelExplainer:
 
     def _plot_uncertainty(
         self, predictions: np.ndarray, intervals: np.ndarray, y_true: np.ndarray
-    ) -> str:
+    ) -> str | None:
         """Plot prediction uncertainty"""
         import matplotlib.pyplot as plt
 
+        if self.config.save_path is None:
+            return None
         save_path = Path(self.config.save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 
@@ -3204,9 +3084,7 @@ class ModelExplainer:
 
         # 2. Interval coverage
         ax2 = axes[0, 1]
-        coverage = (
-            np.mean((y_true >= intervals[:, 0]) & (y_true <= intervals[:, 1])) * 100
-        )
+        coverage = np.mean((y_true >= intervals[:, 0]) & (y_true <= intervals[:, 1])) * 100
 
         in_interval = (y_true >= intervals[:, 0]) & (y_true <= intervals[:, 1])
         ax2.hist(in_interval.astype(int), bins=2, edgecolor="black")
@@ -3253,9 +3131,7 @@ class ModelExplainer:
         ax4.legend()
         ax4.grid(True, alpha=0.3)
 
-        plt.suptitle(
-            f"Uncertainty Analysis - {self.model_name}", fontsize=16, fontweight="bold"
-        )
+        plt.suptitle(f"Uncertainty Analysis - {self.model_name}", fontsize=16, fontweight="bold")
         plt.tight_layout()
 
         uncertainty_path = save_path / f"{self.model_name}_uncertainty.png"
@@ -3266,9 +3142,7 @@ class ModelExplainer:
 
         return str(uncertainty_path)
 
-    def explain_single_prediction(
-        self, X_single: pd.DataFrame, index: int = 0
-    ) -> dict[str, Any]:
+    def explain_single_prediction(self, X_single: pd.DataFrame, index: int = 0) -> dict[str, Any]:
         """Explain a single prediction in detail."""
         try:
             pass
@@ -3296,6 +3170,8 @@ class ModelExplainer:
             self._calculate_shap(X_single, X_single)
             explainer = self._SHAP_EXPLAINER_CACHE.get(self._cache_key)
 
+        if explainer is None:
+            raise RuntimeError("SHAP explainer could not be initialised")
         shap_values = explainer.shap_values(X_single)
 
         # Feature contributions
@@ -3313,22 +3189,6 @@ class ModelExplainer:
             "base_value": float(explainer.expected_value),
             "contributions": contributions,
         }
-
-    @classmethod
-    def clear_cache(cls, cache_key: str | None = None):
-        """
-        Clear SHAP explainer cache.
-
-        Args:
-            cache_key: Specific key to clear, or None to clear all
-        """
-        with cls._CACHE_LOCK:
-            if cache_key:
-                cls._SHAP_EXPLAINER_CACHE.pop(cache_key, None)
-                logger.debug(f"Cleared SHAP cache for {cache_key[:8]}")
-            else:
-                cls._SHAP_EXPLAINER_CACHE.clear()
-                logger.debug("Cleared all SHAP caches")
 
 
 # =====================================================================
@@ -3374,9 +3234,7 @@ def check_gpu_available(force_recheck: bool = False) -> bool:
 
             if torch.cuda.is_available():
                 device_name = torch.cuda.get_device_name(0)
-                total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (
-                    1024**3
-                )
+                total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 cuda_version = torch.version.cuda
                 logger.info(
                     f"PyTorch CUDA: {device_name} ({total_vram_gb:.1f}GB, CUDA {cuda_version})"
@@ -3425,8 +3283,8 @@ def check_gpu_available(force_recheck: bool = False) -> bool:
             # OPTIMIZATION: Check device parameter support without training
             try:
                 # Create booster params (no training)
-                test_params = {"device": "gpu", "n_estimators": 1, "verbose": -1}
-                lgb.LGBMRegressor(**test_params)
+                test_params = {"device": "gpu", "n_estimators": 1, "verbose": -1}  # type: ignore[dict-item]
+                lgb.LGBMRegressor(**test_params)  # type: ignore[arg-type]
                 logger.info("LightGBM GPU: device=gpu supported")
                 gpu_methods.append("LightGBM GPU")
             except Exception as e:
@@ -3481,7 +3339,7 @@ def check_gpu_available(force_recheck: bool = False) -> bool:
         return _GPU_AVAILABLE
 
 
-def get_gpu_memory_usage(device_id: int = 0) -> dict[str, float]:
+def get_gpu_memory_usage(device_id: int = 0) -> dict[str, Any]:
     """
     Get current GPU memory usage (OPTIMIZED with caching).
     OPTIMIZATION: Results cached for 1 second to avoid repeated subprocess calls.
@@ -3615,6 +3473,7 @@ def clear_gpu_cache() -> float:
     except Exception as e:
         logger.debug(f"GPU cache clear failed: {e}")
         return 0.0
+    return 0.0
 
 
 def get_model_gpu_params(model_name: str, config: dict[str, Any]) -> dict[str, Any]:
@@ -3671,12 +3530,12 @@ def get_model_gpu_params(model_name: str, config: dict[str, Any]) -> dict[str, A
 
         if not xgb_gpu:
             logger.warning(
-                f"⚠️ GPU enabled but no 'xgboost' section in gpu config\n"
-                f"   Add: gpu.xgboost.device='cuda:0' to config.yaml"
+                "⚠️ GPU enabled but no 'xgboost' section in gpu config\n"
+                "   Add: gpu.xgboost.device='cuda:0' to config.yaml"
             )
             return {}
 
-        # ✅ FIX: Auto-correct device parameter
+        # Auto-correct device parameter
         device_raw = xgb_gpu.get("device", "cuda")
 
         # XGBoost 3.0+ requires explicit GPU ID (e.g., 'cuda:0')
@@ -3708,8 +3567,7 @@ def get_model_gpu_params(model_name: str, config: dict[str, Any]) -> dict[str, A
                 params[key] = xgb_gpu[key]
 
         logger.debug(
-            f"✅ XGBoost GPU params: device={params['device']}, "
-            f"n_jobs={params['n_jobs']}"
+            f"✅ XGBoost GPU params: device={params['device']}, " f"n_jobs={params['n_jobs']}"
         )
 
         return params
@@ -3723,8 +3581,8 @@ def get_model_gpu_params(model_name: str, config: dict[str, Any]) -> dict[str, A
 
         if not lgb_gpu:
             logger.warning(
-                f"⚠️ GPU enabled but no 'lightgbm' section in gpu config\n"
-                f"   Add: gpu.lightgbm.device='gpu' to config.yaml"
+                "⚠️ GPU enabled but no 'lightgbm' section in gpu config\n"
+                "   Add: gpu.lightgbm.device='gpu' to config.yaml"
             )
             return {}
 
@@ -3794,12 +3652,12 @@ class ModelManager:
         "gradient_boosting",
         "xgboost",
         "lightgbm",
-        # FIX F-04: xgboost_median is the specialist pricing model in the two-model
+        # xgboost_median is the specialist pricing model in the two-model
         # hybrid.  Without random_state injection, every training run produces a
         # different tree structure — breaking the G9 reproducibility gate silently.
         "xgboost_median",
     }
-    # FIX F-05: xgboost_median added for completeness. Note: the *active* n_jobs
+    # xgboost_median added for completeness. Note: the *active* n_jobs
     # injection path uses _CPU_ONLY_NJOBS_MODELS (random_forest, knn) inside
     # _add_default_params.  xgboost and xgboost_median receive n_jobs via
     # get_model_gpu_params() on GPU paths; on CPU fallback they run single-threaded
@@ -3811,7 +3669,7 @@ class ModelManager:
         "xgboost",
         "xgboost_median",
         "lightgbm",
-    }  # FIX-7: xgboost_median was absent → 40+ spurious GPU warnings per run
+    }  # xgboost_median was absent → 40+ spurious GPU warnings per run
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialize ModelManager with optimized GPU handling."""
@@ -3853,8 +3711,8 @@ class ModelManager:
         self._gpu_available = check_gpu_available()
 
         self._gpu_memory_gb = 0.0
-        self._gpu_logged_models = set()
-        self._created_models_logged = set()
+        self._gpu_logged_models: set[str] = set()
+        self._created_models_logged: set[str] = set()
         self._gpu_warning_lock = threading.Lock()
 
         if self._gpu_available:
@@ -3898,9 +3756,7 @@ class ModelManager:
 
         # Diagnostic settings (from config)
         self.shap_max_samples = self.explainability_config_dict["shap_max_samples"]
-        self.shap_background_samples = self.explainability_config_dict[
-            "shap_background_samples"
-        ]
+        self.shap_background_samples = self.explainability_config_dict["shap_background_samples"]
         self.residual_sample_size = self.diag_config["residual_sample_size"]
         self.autocorr_lag_limit = self.diag_config["autocorr_lag_limit"]
         self.calibration_bins = self.diag_config["calibration_bins"]
@@ -3928,7 +3784,7 @@ class ModelManager:
             # Risk model ("xgboost") uses reg:quantileerror α=0.65 for
             # conservative tail estimates. Separate factory entries ensure each
             # model saves to a distinct filename (xgboost_median.joblib vs
-            # xgboost.joblib) — fixes BUG-1 filename collision.
+            # xgboost.joblib)
             "xgboost_median": xgb.XGBRegressor,
             "lightgbm": lgb.LGBMRegressor,
             "svr": SVR,
@@ -4000,17 +3856,15 @@ class ModelManager:
         requested_path = Path(model_dir).resolve()
         try:
             requested_path.relative_to(self.model_base_dir)
-        except ValueError:
+        except ValueError as exc:
             raise SecurityError(
                 f"Access denied: model_dir must be within {self.model_base_dir}. "
                 f"Attempted access to: {requested_path}"
-            )
+            ) from exc
         requested_path.mkdir(parents=True, exist_ok=True)
         return requested_path
 
-    def _add_default_params(
-        self, model_name: str, params: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _add_default_params(self, model_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """
         Inject construction-time defaults that are not part of Optuna's search space.
 
@@ -4023,7 +3877,7 @@ class ModelManager:
                     a merge-order dependency that silently breaks GPU training if
                     the merge order ever changes.
           - quantile_alpha: XGBoost task param — not a hyperparameter, belongs here
-          - predictor: REMOVED (v7.4.5-fix4) — deprecated in XGBoost 2.0+
+          - predictor: — deprecated in XGBoost 2.0+
         """
         params = params.copy()
 
@@ -4062,9 +3916,7 @@ class ModelManager:
                     # fall back to "xgboost" block for backward compatibility.
                     _alpha = self.config.get("models", {}).get(model_name, {}).get(
                         "quantile_alpha"
-                    ) or self.config.get("models", {}).get("xgboost", {}).get(
-                        "quantile_alpha"
-                    )
+                    ) or self.config.get("models", {}).get("xgboost", {}).get("quantile_alpha")
                     if _alpha is not None:
                         params["quantile_alpha"] = float(_alpha)
                         logger.debug(
@@ -4081,7 +3933,7 @@ class ModelManager:
                             model_name,
                         )
 
-            # ── predictor: REMOVED (v7.4.5-fix4) ──────────────────────
+            # ── predictor: REMOVED──────────────────────
             # 'predictor' was valid in XGBoost 1.x to force CPU inference.
             # XGBoost 2.0+ controls inference device via device= only.
             # Passing it emits UserWarning on every .fit() call (~500 lines
@@ -4119,9 +3971,7 @@ class ModelManager:
         # Validate model name
         if model_name not in self._model_factories:
             available = ", ".join(self._model_factories.keys())
-            raise ValueError(
-                f"Unknown model '{model_name}'. " f"Available: {available}"
-            )
+            raise ValueError(f"Unknown model '{model_name}'. " f"Available: {available}")
 
         # Validate no parameter conflicts
         if params is not None and kwargs:
@@ -4150,9 +4000,7 @@ class ModelManager:
                             f"section missing in config.yaml"
                         )
 
-                    logger.warning(
-                        f"⚠️ GPU params empty for {model_name}, falling back to CPU"
-                    )
+                    logger.warning(f"⚠️ GPU params empty for {model_name}, falling back to CPU")
                     final_params = model_params
                 else:
                     # Merge GPU params
@@ -4187,9 +4035,7 @@ class ModelManager:
                 try:
                     # get_xgb_params() reads the booster C++ config — most reliable
                     if hasattr(model, "get_xgb_params"):
-                        actual_obj = str(
-                            model.get_xgb_params().get("objective", "unknown")
-                        )
+                        actual_obj = str(model.get_xgb_params().get("objective", "unknown"))
                     elif hasattr(model, "get_params"):
                         actual_obj = str(model.get_params().get("objective", "unknown"))
                     else:
@@ -4226,8 +4072,7 @@ class ModelManager:
                 param_count = len(final_params)
                 gpu_status = "GPU" if (gpu and self._gpu_available) else "CPU"
                 logger.info(
-                    f"✅ Created {model_name} ({gpu_status}) "
-                    f"with {param_count} parameters"
+                    f"✅ Created {model_name} ({gpu_status}) " f"with {param_count} parameters"
                 )
                 self._created_models_logged.add(model_name)
 
@@ -4249,9 +4094,7 @@ class ModelManager:
             logger.error(f"Failed to create {model_name}: {e}", exc_info=True)
             raise
 
-    def get_model_fast(
-        self, model_name: str, params: dict[str, Any], gpu: bool = False
-    ) -> Any:
+    def get_model_fast(self, model_name: str, params: dict[str, Any], gpu: bool = False) -> Any:
         """
         Fast model creation for Optuna trials (OPTIMIZATION).
 
@@ -4312,9 +4155,7 @@ class ModelManager:
         """Create model with calibration wrapper."""
         base_model = self.get_model(model_name, params, gpu, **kwargs)
         calibrated = CalibratedModel(base_model, calibration_method)
-        logger.info(
-            f"🎯 Created calibrated {model_name} " f"(method={calibration_method})"
-        )
+        logger.info(f"🎯 Created calibrated {model_name} " f"(method={calibration_method})")
 
         return calibrated
 
@@ -4342,9 +4183,7 @@ class ModelManager:
         for empirical prediction interval calculation.
         """
         if early_stopping_rounds is None:
-            early_stopping_rounds = self.config.get("model", {}).get(
-                "early_stopping_rounds", 50
-            )
+            early_stopping_rounds = self.config.get("model", {}).get("early_stopping_rounds", 50)
 
         model_type = type(model).__name__
 
@@ -4365,8 +4204,7 @@ class ModelManager:
         if model_type == "XGBRegressor":
             device = model.get_params().get("device", "cpu")
             logger.info(
-                f"🎯 Training XGBoost (device: {device}, "
-                f"early_stop: {early_stopping_rounds})"
+                f"🎯 Training XGBoost (device: {device}, " f"early_stop: {early_stopping_rounds})"
             )
 
             try:
@@ -4378,9 +4216,7 @@ class ModelManager:
                 model.fit(X_train, y_train, **fit_params)
 
                 if hasattr(model, "best_iteration"):
-                    logger.info(
-                        f"✅ XGBoost converged at iteration: {model.best_iteration}"
-                    )
+                    logger.info(f"✅ XGBoost converged at iteration: {model.best_iteration}")
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -4412,8 +4248,7 @@ class ModelManager:
         elif model_type == "LGBMRegressor":
             device = model.get_params().get("device", "cpu")
             logger.info(
-                f"🎯 Training LightGBM (device: {device}, "
-                f"early_stop: {early_stopping_rounds})"
+                f"🎯 Training LightGBM (device: {device}, " f"early_stop: {early_stopping_rounds})"
             )
 
             # ADD THIS: Log GPU BEFORE training
@@ -4424,9 +4259,7 @@ class ModelManager:
             try:
                 fit_params = {
                     "eval_set": [(X_val, y_val)],
-                    "callbacks": [
-                        lgb.early_stopping(early_stopping_rounds, verbose=verbose)
-                    ],
+                    "callbacks": [lgb.early_stopping(early_stopping_rounds, verbose=verbose)],
                 }
 
                 if sample_weight is not None:
@@ -4443,9 +4276,7 @@ class ModelManager:
                     )
 
                 if hasattr(model, "best_iteration_"):
-                    logger.info(
-                        f"✅ LightGBM converged at iteration: {model.best_iteration_}"
-                    )
+                    logger.info(f"✅ LightGBM converged at iteration: {model.best_iteration_}")
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -4510,9 +4341,7 @@ class ModelManager:
 
             # Store as lists for JSON compatibility
             model._conformal_data["validation_predictions"] = y_val_pred.tolist()
-            model._conformal_data["validation_residuals"] = (
-                validation_residuals.tolist()
-            )
+            model._conformal_data["validation_residuals"] = validation_residuals.tolist()
             model._conformal_data["n_calibration"] = int(len(y_val_pred))
 
             # Also set as attribute for immediate use (will be lost on save/load)
@@ -4598,7 +4427,7 @@ class ModelManager:
         if not isinstance(X_test, pd.DataFrame):
             raise TypeError(f"X_test must be DataFrame, got {type(X_test)}")
 
-        if not isinstance(y_test, (pd.Series, np.ndarray)):
+        if not isinstance(y_test, pd.Series | np.ndarray):
             raise TypeError(f"y_test must be Series/ndarray, got {type(y_test)}")
 
         if len(X_test) == 0:
@@ -4606,8 +4435,7 @@ class ModelManager:
 
         if len(X_test) != len(y_test):
             raise ValueError(
-                f"Shape mismatch: X_test has {len(X_test)} rows, "
-                f"y_test has {len(y_test)} rows"
+                f"Shape mismatch: X_test has {len(X_test)} rows, " f"y_test has {len(y_test)} rows"
             )
 
         # OPTIMIZATION: Reuse predictions if provided
@@ -4622,15 +4450,11 @@ class ModelManager:
         # Validate predictions
         if np.isnan(y_pred).any():
             n_nan = np.isnan(y_pred).sum()
-            raise PredictionError(
-                f"{model_name} produced {n_nan}/{len(y_pred)} NaN predictions"
-            )
+            raise PredictionError(f"{model_name} produced {n_nan}/{len(y_pred)} NaN predictions")
 
         if np.isinf(y_pred).any():
             n_inf = np.isinf(y_pred).sum()
-            raise PredictionError(
-                f"{model_name} produced {n_inf}/{len(y_pred)} inf predictions"
-            )
+            raise PredictionError(f"{model_name} produced {n_inf}/{len(y_pred)} inf predictions")
 
         # Initialize transformation metadata
         if target_transformation is None:
@@ -4697,13 +4521,13 @@ class ModelManager:
                     )
                     y_pred_orig = np.maximum(y_pred_orig, 0)
 
-                # ── F-01 FIX: Apply stratified bias correction during evaluation ──
+                # Apply stratified bias correction during evaluation ──
                 # Uses y_test_orig (ground-truth) for tier routing — correct at eval time.
                 # At inference, predict.py uses y_pred as self-referential proxy instead.
                 if bias_correction is not None:
                     y_pred_orig = bias_correction.apply(
                         y_pred=y_pred_orig,
-                        y_original=y_test_orig,  # ✅ use true labels for tier routing at eval
+                        y_original=y_test_orig,  # use true labels for tier routing at eval
                         log_details=True,
                     )
                     logger.info(
@@ -4747,9 +4571,7 @@ class ModelManager:
                     f"Inverse transformation failed for {model_name}: {e}",
                     exc_info=True,
                 )
-                raise TransformError(
-                    f"Failed to inverse transform predictions: {e}"
-                ) from e
+                raise TransformError(f"Failed to inverse transform predictions: {e}") from e
 
         else:
             logger.info(
@@ -4762,9 +4584,7 @@ class ModelManager:
 
         # Calculate prediction intervals (optional)
         if calculate_intervals:
-            intervals = self._calculate_prediction_intervals(
-                model, X_test, interval_alpha
-            )
+            intervals = self._calculate_prediction_intervals(model, X_test, interval_alpha)
 
             if intervals is not None:
                 if target_transformation.method != "none":
@@ -4780,8 +4600,7 @@ class ModelManager:
                     metrics["prediction_intervals"] = intervals.tolist()
 
                 logger.info(
-                    f"  📈 Calculated {100*(1-interval_alpha):.0f}% "
-                    f"prediction intervals"
+                    f"  📈 Calculated {100*(1-interval_alpha):.0f}% " f"prediction intervals"
                 )
 
         return metrics, y_pred_orig
@@ -4849,7 +4668,7 @@ class ModelManager:
             intervals = explanations["confidence_intervals"]
 
             if target_transformation and target_transformation.method != "none":
-
+                assert feature_engineer is not None
                 y_test_orig = feature_engineer.inverse_transform_target(
                     y_test.values if hasattr(y_test, "values") else y_test,
                     transformation_method=target_transformation.method,
@@ -4866,10 +4685,7 @@ class ModelManager:
 
             # Calculate coverage using ORIGINAL scale values
             coverage = (
-                np.mean(
-                    (y_test_orig >= intervals[:, 0]) & (y_test_orig <= intervals[:, 1])
-                )
-                * 100
+                np.mean((y_test_orig >= intervals[:, 0]) & (y_test_orig <= intervals[:, 1])) * 100
             )
             avg_width = np.mean(intervals[:, 1] - intervals[:, 0])
 
@@ -4886,7 +4702,7 @@ class ModelManager:
         if explanations["feature_importance"] is not None:
             top_5 = explanations["feature_importance"].head(5)
             logger.info(
-                f"🎯 Top 5 SHAP Features:\n"
+                "🎯 Top 5 SHAP Features:\n"
                 + "\n".join(
                     f"   {i+1}. {row['feature']}: {row['importance']:.4f}"
                     for i, row in top_5.iterrows()
@@ -4959,9 +4775,7 @@ class ModelManager:
         train_mape = 100 * np.mean(
             np.abs((y_train_orig - y_train_pred) / np.maximum(y_train_orig, 1e-10))
         )
-        val_mape = 100 * np.mean(
-            np.abs((y_val_orig - y_val_pred) / np.maximum(y_val_orig, 1e-10))
-        )
+        val_mape = 100 * np.mean(np.abs((y_val_orig - y_val_pred) / np.maximum(y_val_orig, 1e-10)))
 
         # Overfitting metrics
         gap_absolute = val_rmse - train_rmse
@@ -4972,9 +4786,7 @@ class ModelManager:
         logger.info(f"{'='*80}")
         logger.info(f"{'Metric':<15} {'Training':<15} {'Validation':<15} {'Gap':<15}")
         logger.info(f"{'-'*80}")
-        logger.info(
-            f"{'RMSE':<15} ${train_rmse:<14,.0f} ${val_rmse:<14,.0f} {gap_percent:>6.1f}%"
-        )
+        logger.info(f"{'RMSE':<15} ${train_rmse:<14,.0f} ${val_rmse:<14,.0f} {gap_percent:>6.1f}%")
         logger.info(f"{'MAE':<15} ${train_mae:<14,.0f} ${val_mae:<14,.0f}")
         logger.info(f"{'R²':<15} {train_r2:<15.4f} {val_r2:<15.4f}")
         logger.info(f"{'MAPE':<15} {train_mape:<14.2f}% {val_mape:<14.2f}%")
@@ -5070,7 +4882,7 @@ class ModelManager:
         model_name: str = "",
         scale: str = "",
         n_features: int | None = None,
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         """Calculate comprehensive regression metrics (OPTIMIZED)."""
         mse = mean_squared_error(y_true, y_pred)
         rmse = np.sqrt(mse)
@@ -5086,15 +4898,13 @@ class ModelManager:
             mape_value = 100.0 * np.mean(np.abs((y_true - y_pred) / denominator))
 
             if not np.isfinite(mape_value) or mape_value > 1000:
-                logger.warning(
-                    f"MAPE calculation produced unrealistic value: {mape_value:.2f}%"
-                )
+                logger.warning(f"MAPE calculation produced unrealistic value: {mape_value:.2f}%")
                 mape_value = 0.0
 
         except (ZeroDivisionError, ValueError) as e:
             logger.warning(f"MAPE calculation failed for {model_name}: {e}")
 
-        metrics = {
+        metrics: dict[str, Any] = {
             "mse": float(mse),
             "rmse": float(rmse),
             "mae": float(mae),
@@ -5130,9 +4940,7 @@ class ModelManager:
             sample = residuals
             if len(residuals) > self.residual_sample_size:
                 rng = np.random.RandomState(self.random_state)
-                idx = rng.choice(
-                    len(residuals), self.residual_sample_size, replace=False
-                )
+                idx = rng.choice(len(residuals), self.residual_sample_size, replace=False)
                 # Use iloc for positional indexing to handle pandas Series with custom indices
                 if hasattr(residuals, "iloc"):
                     sample = residuals.iloc[idx].values
@@ -5246,7 +5054,7 @@ class ModelManager:
             }
         ).sort_values("importance_mean", ascending=False)
 
-        logger.info(f"✅ Permutation importance calculated")
+        logger.info("✅ Permutation importance calculated")
         return importance_df
 
     def diagnose_residuals(
@@ -5276,7 +5084,7 @@ class ModelManager:
         residuals = validation_residuals
 
         # Basic statistics
-        diagnostics = {
+        diagnostics: dict[str, Any] = {
             "n_samples": len(residuals),
             "mean": float(np.mean(residuals)),
             "std": float(np.std(residuals)),
@@ -5302,8 +5110,7 @@ class ModelManager:
                 np.sum(np.abs(residuals - np.mean(residuals)) > 4 * np.std(residuals))
             ),
             "outlier_pct": float(
-                np.mean(np.abs(residuals - np.mean(residuals)) > 3 * np.std(residuals))
-                * 100
+                np.mean(np.abs(residuals - np.mean(residuals)) > 3 * np.std(residuals)) * 100
             ),
         }
 
@@ -5373,10 +5180,8 @@ class ModelManager:
         logger.info("RESIDUAL DIAGNOSTICS")
         logger.info("=" * 70)
         logger.info(f"Samples: {diagnostics['n_samples']:,}")
-        logger.info(
-            f"Mean: {diagnostics['mean']:+.6f} (bias indicator — sensitive to outliers)"
-        )
-        # FIX-AUDIT-P5: For skewed residuals (insurance data typically has skewness > 2),
+        logger.info(f"Mean: {diagnostics['mean']:+.6f} (bias indicator — sensitive to outliers)")
+        # For skewed residuals (insurance data typically has skewness > 2),
         # the mean is pulled toward the extreme tail and masks systematic over/under-prediction
         # for the majority of policyholders.  The median is the robust bias indicator.
         # A negative median means the model over-predicts for >50% of samples.
@@ -5396,7 +5201,7 @@ class ModelManager:
             )
         logger.info(f"Std: {diagnostics['std']:.6f}")
         logger.info(f"Range: [{diagnostics['min']:.4f}, {diagnostics['max']:.4f}]")
-        logger.info(f"\nPercentiles:")
+        logger.info("\nPercentiles:")
         logger.info(f"  1%:  {diagnostics['p01']:+.4f}")
         logger.info(f"  5%:  {diagnostics['p05']:+.4f}")
         logger.info(f"  25%: {diagnostics['p25']:+.4f}")
@@ -5404,19 +5209,19 @@ class ModelManager:
         logger.info(f"  75%: {diagnostics['p75']:+.4f}")
         logger.info(f"  95%: {diagnostics['p95']:+.4f}")
         logger.info(f"  99%: {diagnostics['p99']:+.4f}")
-        logger.info(f"\nDistribution Shape:")
+        logger.info("\nDistribution Shape:")
         logger.info(
             f"  Skewness: {diagnostics['skewness']:+.3f} {'(symmetric)' if abs(diagnostics['skewness']) < 0.5 else '(asymmetric)'}"
         )
         logger.info(
             f"  Kurtosis: {diagnostics['kurtosis']:+.3f} {'(normal tails)' if abs(diagnostics['kurtosis']) < 3 else '(heavy tails)'}"
         )
-        logger.info(f"\nOutliers:")
+        logger.info("\nOutliers:")
         logger.info(
             f"  >3σ: {diagnostics['n_outliers_3sigma']} ({diagnostics['outlier_pct']:.2f}%)"
         )
         logger.info(f"  >4σ: {diagnostics['n_outliers_4sigma']}")
-        logger.info(f"\nNormality:")
+        logger.info("\nNormality:")
         logger.info(f"  Shapiro p-value: {diagnostics['shapiro_pvalue']:.4f}")
         logger.info(f"  Is Normal: {'YES' if diagnostics['is_normal'] else 'NO'}")
 
@@ -5456,9 +5261,7 @@ class ModelManager:
         mu, sigma = residuals.mean(), residuals.std()
         x = np.linspace(residuals.min(), residuals.max(), 100)
         ax1.plot(x, stats.norm.pdf(x, mu, sigma), "r-", linewidth=2, label="Normal")
-        ax1.axvline(
-            mu, color="green", linestyle="--", linewidth=2, label=f"Mean: {mu:.4f}"
-        )
+        ax1.axvline(mu, color="green", linestyle="--", linewidth=2, label=f"Mean: {mu:.4f}")
         ax1.set_xlabel("Residual")
         ax1.set_ylabel("Density")
         ax1.set_title("Histogram with Normal Overlay")
@@ -5482,9 +5285,7 @@ class ModelManager:
         ax4 = axes[1, 0]
         ax4.plot(residuals, alpha=0.7)
         ax4.axhline(y=0, color="r", linestyle="--", linewidth=2)
-        ax4.axhline(
-            y=3 * sigma, color="orange", linestyle="--", linewidth=1, label="±3σ"
-        )
+        ax4.axhline(y=3 * sigma, color="orange", linestyle="--", linewidth=1, label="±3σ")
         ax4.axhline(y=-3 * sigma, color="orange", linestyle="--", linewidth=1)
         ax4.set_xlabel("Index")
         ax4.set_ylabel("Residual")
@@ -5506,9 +5307,7 @@ class ModelManager:
         # 6. Outlier Count by Sigma
         ax6 = axes[1, 2]
         sigma_levels = [1, 2, 3, 4, 5]
-        outlier_counts = [
-            np.sum(np.abs(residuals - mu) > k * sigma) for k in sigma_levels
-        ]
+        outlier_counts = [np.sum(np.abs(residuals - mu) > k * sigma) for k in sigma_levels]
         ax6.bar(
             [f">{k}σ" for k in sigma_levels],
             outlier_counts,
@@ -5541,7 +5340,7 @@ class ModelManager:
         errors = np.abs(y_true - y_pred)
         pct_errors = (errors / np.maximum(y_true, 1e-10)) * 100
 
-        diagnostics = {
+        diagnostics: dict[str, Any] = {
             "mae": float(np.mean(errors)),
             "median_ae": float(np.median(errors)),
             "std_ae": float(np.std(errors)),
@@ -5589,9 +5388,7 @@ class ModelManager:
             axes[1].grid(True, alpha=0.3)
 
             plt.tight_layout()
-            plt.savefig(
-                f"{save_path}/{model_name}_error_dist.png", dpi=300, bbox_inches="tight"
-            )
+            plt.savefig(f"{save_path}/{model_name}_error_dist.png", dpi=300, bbox_inches="tight")
             plt.close()
 
         return diagnostics
@@ -5653,9 +5450,7 @@ class ModelManager:
                 )
                 plt.close()
 
-            calibration_error = np.mean(
-                np.abs(np.array(bin_means_pred) - np.array(bin_means_true))
-            )
+            calibration_error = np.mean(np.abs(np.array(bin_means_pred) - np.array(bin_means_true)))
 
             return {
                 "calibration_error": float(calibration_error),
@@ -5693,14 +5488,12 @@ class ModelManager:
             }
 
             if model_type in skip_models:
-                logger.warning(
-                    f"⚠️ Skipping PDP for {model_type} - sklearn compatibility issues"
-                )
+                logger.warning(f"⚠️ Skipping PDP for {model_type} - sklearn compatibility issues")
                 return None
 
             valid_features = [f for f in features if f in X.columns]
             if not valid_features:
-                logger.warning(f"No valid features for PDP")
+                logger.warning("No valid features for PDP")
                 return None
 
             valid_features = valid_features[:6]
@@ -5712,9 +5505,7 @@ class ModelManager:
 
             # Validate model compatibility
             required_attrs = ["predict", "n_features_in_"]
-            missing_attrs = [
-                attr for attr in required_attrs if not hasattr(model, attr)
-            ]
+            missing_attrs = [attr for attr in required_attrs if not hasattr(model, attr)]
 
             if missing_attrs:
                 logger.warning(f"Model missing sklearn attributes: {missing_attrs}")
@@ -5768,8 +5559,8 @@ class ModelManager:
             error_msg = str(ve).lower()
             if "must be a fitted" in error_msg:
                 logger.error(
-                    f"❌ PDP failed: Model not recognized as fitted. "
-                    f"Skipping PDP - use SHAP or permutation importance instead."
+                    "❌ PDP failed: Model not recognized as fitted. "
+                    "Skipping PDP - use SHAP or permutation importance instead."
                 )
             else:
                 logger.error(f"PDP failed with ValueError: {ve}")
@@ -5802,9 +5593,7 @@ class ModelManager:
             idx = np.random.choice(len(y_true), MAX_PLOT_SAMPLES, replace=False)
             y_true_plot = y_true[idx]
             y_pred_plot = y_pred[idx]
-            logger.info(
-                f"Sampled {MAX_PLOT_SAMPLES} of {len(y_true)} samples for residual plots"
-            )
+            logger.info(f"Sampled {MAX_PLOT_SAMPLES} of {len(y_true)} samples for residual plots")
         else:
             y_true_plot = y_true
             y_pred_plot = y_pred
@@ -5924,7 +5713,7 @@ class ModelManager:
         # Diagnostics (use full dataset, not sample)
         full_residuals = y_true - y_pred
 
-        diagnostics = {
+        diagnostics: dict[str, Any] = {
             "residual_mean": float(full_residuals.mean()),
             "residual_std": float(full_residuals.std()),
             "residual_skewness": float(pd.Series(full_residuals).skew()),
@@ -5936,9 +5725,7 @@ class ModelManager:
             sample = full_residuals
         else:
             rng = np.random.RandomState(self.random_state)
-            idx = rng.choice(
-                len(full_residuals), self.residual_sample_size, replace=False
-            )
+            idx = rng.choice(len(full_residuals), self.residual_sample_size, replace=False)
             sample = full_residuals[idx]
 
         # Skip shapiro test if sample has zero variance (perfect predictions)
@@ -5989,9 +5776,7 @@ class ModelManager:
             if train_sizes is None:
                 train_sizes = np.linspace(0.3, 1.0, 5)
             cv = min(cv, 3)
-            logger.info(
-                f"Large dataset detected: reduced to {len(train_sizes)} points, cv={cv}"
-            )
+            logger.info(f"Large dataset detected: reduced to {len(train_sizes)} points, cv={cv}")
         elif train_sizes is None:
             train_sizes = np.linspace(0.1, 1.0, self.learning_curve_points)
 
@@ -6196,17 +5981,14 @@ class ModelManager:
             tmp_model_path = None
             logger.debug(f"  ✅ Model binary saved: {model_path.name}")
 
-            # Fix 2b — XGBoost 3.x joblib/pickle round-trips reset base_score to 0.5
+            # XGBoost 3.x joblib/pickle round-trips reset base_score to 0.5
             # (the booster's internal JSON config is not preserved by pickle).
             # Save the booster in XGBoost's native format alongside the joblib file
-            # so Fix 2c can restore it on load.
             _booster_path = model_path.with_suffix(
                 ".joblib.booster.ubj"
             )  # v7.5.2: explicit UBJSON — eliminates format-guess warning
             try:
-                _raw_model = (
-                    model.base_model if isinstance(model, CalibratedModel) else model
-                )
+                _raw_model = model.base_model if isinstance(model, CalibratedModel) else model
                 if hasattr(_raw_model, "get_booster"):
                     _raw_model.get_booster().save_model(str(_booster_path))
                     logger.debug(f"  ✅ Booster state saved: {_booster_path.name}")
@@ -6222,16 +6004,13 @@ class ModelManager:
             metadata = {
                 "model_name": model_name,
                 "model_type": type(model).__name__,
-                "parameters": (
-                    model.get_params() if hasattr(model, "get_params") else {}
-                ),
+                "parameters": (model.get_params() if hasattr(model, "get_params") else {}),
                 "save_timestamp": pd.Timestamp.now().isoformat(),
                 "model_manager_version": self.VERSION,
                 "n_features": getattr(model, "n_features_in_", None),
                 "feature_names": feature_names,
                 "target_transformation": target_transformation,
-                "gpu_trained": self._gpu_available
-                and model_name in self.GPU_CAPABLE_MODELS,
+                "gpu_trained": self._gpu_available and model_name in self.GPU_CAPABLE_MODELS,
             }
 
             # Add any additional metadata
@@ -6266,9 +6045,7 @@ class ModelManager:
                     conformal_source = "CalibratedModel.base_model"
 
             # Check 2: Direct model attribute
-            elif (
-                hasattr(model, "_conformal_data") and model._conformal_data is not None
-            ):
+            elif hasattr(model, "_conformal_data") and model._conformal_data is not None:
                 metadata["conformal_data"] = model._conformal_data
                 conformal_data_found = True
                 conformal_source = "model"
@@ -6294,9 +6071,7 @@ class ModelManager:
                     missing = [k for k in required_keys if k not in conf]
 
                     if missing:
-                        logger.warning(
-                            f"  ⚠️  conformal_data missing keys: {missing} - removing"
-                        )
+                        logger.warning(f"  ⚠️  conformal_data missing keys: {missing} - removing")
                         del metadata["conformal_data"]
                         conformal_data_found = False
                     else:
@@ -6305,7 +6080,7 @@ class ModelManager:
                         n_resids = len(conf.get("validation_residuals", []))
 
                         if n_preds == 0 or n_resids == 0:
-                            logger.warning(f"  ⚠️  Empty conformal data - removing")
+                            logger.warning("  ⚠️  Empty conformal data - removing")
                             del metadata["conformal_data"]
                             conformal_data_found = False
                         elif n_preds != n_resids:
@@ -6331,9 +6106,7 @@ class ModelManager:
                             )
 
             if not conformal_data_found:
-                logger.info(
-                    "  ℹ️  No conformal data found - model will use GLOBAL intervals"
-                )
+                logger.info("  ℹ️  No conformal data found - model will use GLOBAL intervals")
 
             # ── PATCH 03 (G4/G9): validate artifact manifest before writing ──────────
             _required_fields = {"git_commit", "pipeline_version", "random_state"}
@@ -6379,7 +6152,7 @@ class ModelManager:
 
             logger.info(f"✅ Model saved successfully: {safe_name}")
 
-            # ── C6 FIX: write checksum inside save_model() ──────────────────
+            # write checksum inside save_model() ──────────────────
             # Previously checksum generation was the responsibility of each
             # caller (e.g. train.py line 4316).  Any code path that calls
             # save_model() directly — notebooks, retraining scripts, specialist
@@ -6390,6 +6163,7 @@ class ModelManager:
             _do_checksum = self.config.get("training", {}).get("save_checksums", True)
             if _do_checksum:
                 import hashlib as _hl_sm
+
                 _ck_val = _hl_sm.sha256(model_path.read_bytes()).hexdigest()
                 _ck_path = model_dir_path / f"{safe_name}_checksum.txt"
                 _ck_path.write_text(f"{_ck_val}\n")
@@ -6454,12 +6228,12 @@ class ModelManager:
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found: {model_path}")
 
-        # ── B2 FIX: SHA-256 integrity check BEFORE deserialization ───────────
+        # SHA-256 integrity check BEFORE deserialization ───────────
         # joblib.load() executes arbitrary code embedded in the pickle stream.
         # The hash must be verified on the raw bytes first so a tampered or
         # corrupted artifact is rejected before any code runs.
         import hashlib as _hashlib
- 
+
         _checksum_path = model_dir_path / f"{safe_name}_checksum.txt"
         if _checksum_path.exists():
             _expected = _checksum_path.read_text().strip()
@@ -6480,16 +6254,16 @@ class ModelManager:
                 f"save_model() to regenerate checksums."
             )
         # ─────────────────────────────────────────────────────────────────────
- 
+
         try:
             model = joblib.load(model_path)
- 
+
             if not hasattr(model, "predict"):
                 raise ValueError(f"Loaded object is not a model: {type(model)}")
- 
+
             logger.info(f"📂 Model loaded: {safe_name}")
 
-            # Fix 2c — restore the booster state written by Fix 2b.
+            # restore the booster state
             # joblib/pickle drops base_score from the booster's internal config in
             # XGBoost 3.x (resets silently to 0.5 default).  The companion .booster
             # file holds the complete native state; loading it here ensures base_score
@@ -6499,16 +6273,10 @@ class ModelManager:
             )  # v7.5.2: explicit UBJSON — eliminates format-guess warning
             if _booster_path.exists():
                 try:
-                    _raw_model = (
-                        model.base_model
-                        if isinstance(model, CalibratedModel)
-                        else model
-                    )
+                    _raw_model = model.base_model if isinstance(model, CalibratedModel) else model
                     if hasattr(_raw_model, "get_booster"):
                         _raw_model.get_booster().load_model(str(_booster_path))
-                        logger.debug(
-                            f"  ✅ Booster state restored from: {_booster_path.name}"
-                        )
+                        logger.debug(f"  ✅ Booster state restored from: {_booster_path.name}")
                 except Exception as _booster_err:
                     logger.warning(
                         f"  ⚠️  Booster state restore failed (base_score may be 0.5 default): "
@@ -6517,7 +6285,7 @@ class ModelManager:
             else:
                 logger.debug(
                     f"  ℹ️  No .booster companion for {model_path.name} "
-                    f"(models saved before Fix 2b — retrain to persist base_score correctly)"
+                    f"(models saved — retrain to persist base_score correctly)"
                 )
 
             # ── POST-LOAD OBJECTIVE VERIFICATION (XGBoost only) ───────────────
@@ -6526,7 +6294,7 @@ class ModelManager:
             # silently produce incorrect predictions. Check the loaded model's
             # objective against the CORRECT per-model config entry.
             #
-            # FIX: Previously this always read from config["models"]["xgboost"],
+            # Previously this always read from config["models"]["xgboost"],
             # which is the risk model's config block (reg:quantileerror). When the
             # specialist phase loads "xgboost_median" (reg:squarederror) it
             # incorrectly compared against the risk model's objective and raised a
@@ -6537,17 +6305,13 @@ class ModelManager:
             if _is_xgb:
                 try:
                     if hasattr(model, "get_xgb_params"):
-                        _loaded_obj = str(
-                            model.get_xgb_params().get("objective", "unknown")
-                        )
+                        _loaded_obj = str(model.get_xgb_params().get("objective", "unknown"))
                     elif hasattr(model, "get_params"):
-                        _loaded_obj = str(
-                            model.get_params().get("objective", "unknown")
-                        )
+                        _loaded_obj = str(model.get_params().get("objective", "unknown"))
                     else:
                         _loaded_obj = "unknown"
 
-                    # ── FIX: 3-path per-model objective resolution ────────────
+                    # ── 3-path per-model objective resolution ────────────
                     #
                     # ROOT CAUSE: old code always read:
                     #   config["models"]["xgboost"]["objective"]
@@ -6574,9 +6338,7 @@ class ModelManager:
                     #   None  : objective not declared anywhere → skip check silently
                     _models_cfg = self.config.get("models", {})
                     _gpu_cfg = self.config.get("gpu", {})
-                    _optuna_cfg = self.config.get("optuna", {}).get(
-                        "constrained_params", {}
-                    )
+                    _optuna_cfg = self.config.get("optuna", {}).get("constrained_params", {})
                     _cfg_obj = (
                         _models_cfg.get(model_name, {}).get("objective")  # path 1
                         or _gpu_cfg.get(model_name, {}).get("objective")  # path 2
@@ -6623,9 +6385,7 @@ class ModelManager:
                 except RuntimeError:
                     raise  # re-raise mismatch error as-is
                 except Exception as _load_obj_err:
-                    logger.warning(
-                        "⚠️  Could not verify loaded model objective: %s", _load_obj_err
-                    )
+                    logger.warning("⚠️  Could not verify loaded model objective: %s", _load_obj_err)
             # ──────────────────────────────────────────────────────────────────
 
             # ================================================================
@@ -6651,9 +6411,7 @@ class ModelManager:
                                 "validation_predictions",
                                 "validation_residuals",
                             ]
-                            missing = [
-                                k for k in required_keys if k not in conformal_data
-                            ]
+                            missing = [k for k in required_keys if k not in conformal_data]
 
                             if missing:
                                 logger.warning(
@@ -6662,12 +6420,8 @@ class ModelManager:
                                 )
                             else:
                                 # Restore as numpy arrays
-                                val_preds = np.array(
-                                    conformal_data["validation_predictions"]
-                                )
-                                val_resids = np.array(
-                                    conformal_data["validation_residuals"]
-                                )
+                                val_preds = np.array(conformal_data["validation_predictions"])
+                                val_resids = np.array(conformal_data["validation_residuals"])
 
                                 # Validate lengths
                                 if len(val_preds) != len(val_resids):
@@ -6685,7 +6439,7 @@ class ModelManager:
                                     model._validation_residuals = val_resids
                                     model._conformal_data = conformal_data
 
-                                    # ── FIX Bug#3: report bins status honestly ──
+                                    # ── report bins status honestly ──
                                     # Previously logged "Heteroscedastic intervals ENABLED"
                                     # unconditionally, even when heteroscedastic_bins was
                                     # absent from conformal_data.  This masked the CI
@@ -6693,9 +6447,7 @@ class ModelManager:
                                     # every inference call despite the confident log).
                                     _has_bins = "heteroscedastic_bins" in conformal_data
                                     _n_bins = (
-                                        conformal_data["heteroscedastic_bins"].get(
-                                            "n_bins", "?"
-                                        )
+                                        conformal_data["heteroscedastic_bins"].get("n_bins", "?")
                                         if _has_bins
                                         else 0
                                     )
@@ -6754,7 +6506,7 @@ class ModelManager:
                     # Check if model was trained with target transformation
                     if "target_transformation" in metadata:
                         raw_transform = metadata["target_transformation"]
-                        # ── FIX #3: Safely extract method string regardless of
+                        # ── Safely extract method string regardless of
                         #            whether metadata stores a string or a
                         #            TargetTransformation object.  When
                         #            additional_metadata overrides the default
@@ -6779,7 +6531,7 @@ class ModelManager:
                     model_type = metadata.get("model_type", "unknown")
                     if model_type in ["CalibratedModel"]:
                         dependency_warnings.append(
-                            f"   • Calibrated model: may require preprocessing"
+                            "   • Calibrated model: may require preprocessing"
                         )
 
                     # Issue warnings if dependencies detected
@@ -6810,9 +6562,7 @@ class ModelManager:
             logger.error(f"Error loading model: {e}", exc_info=True)
             raise
 
-    def get_model_metadata(
-        self, model_name: str, model_dir: str | None = None
-    ) -> dict[str, Any]:
+    def get_model_metadata(self, model_name: str, model_dir: str | None = None) -> dict[str, Any]:
         """Get model metadata."""
         model_dir_path = self._validate_model_dir(model_dir)
         safe_name = self._sanitize_filename(model_name)
@@ -6823,7 +6573,7 @@ class ModelManager:
 
         try:
             metadata = joblib.load(metadata_path)
-            return metadata
+            return dict(metadata)
         except Exception as e:
             logger.error(f"Error loading metadata: {e}")
             raise
@@ -6868,34 +6618,28 @@ class ModelManager:
         print("=" * 70)
 
         if self._gpu_available:
-            print(f"✅ GPU Available: YES")
-            print(
-                f"   Enabled in config: {'YES' if self.gpu_config['enabled'] else 'NO'}"
-            )
+            print("✅ GPU Available: YES")
+            print(f"   Enabled in config: {'YES' if self.gpu_config['enabled'] else 'NO'}")
             print(f"   VRAM: {self._gpu_memory_gb:.1f} GB")
 
             mem = get_gpu_memory_usage()
             if mem["total_mb"] > 0:
-                print(f"\n📊 Current Memory:")
+                print("\n📊 Current Memory:")
                 print(f"   Allocated: {mem['allocated_mb']:.0f} MB")
                 print(f"   Reserved:  {mem['reserved_mb']:.0f} MB")
                 print(f"   Free:      {mem['free_mb']:.0f} MB")
                 print(f"   Usage:     {mem['utilization_pct']:.1f}%")
 
-            print(f"\n⚙️  Config Settings:")
-            print(
-                f"   Memory limit: {self.gpu_config.get('memory_limit_mb', 'N/A')} MB"
-            )
-            print(
-                f"   Warn threshold: {self.gpu_config.get('warn_threshold_mb', 500)} MB"
-            )
+            print("\n⚙️  Config Settings:")
+            print(f"   Memory limit: {self.gpu_config.get('memory_limit_mb', 'N/A')} MB")
+            print(f"   Warn threshold: {self.gpu_config.get('warn_threshold_mb', 500)} MB")
 
-            print(f"\n🎯 GPU-Capable Models:")
+            print("\n🎯 GPU-Capable Models:")
             for model in sorted(self.GPU_CAPABLE_MODELS):
                 print(f"   • {model}")
         else:
-            print(f"❌ GPU Available: NO")
-            print(f"   Using CPU mode for all models")
+            print("❌ GPU Available: NO")
+            print("   Using CPU mode for all models")
 
         print("=" * 70 + "\n")
 
@@ -6976,9 +6720,7 @@ class ModelManager:
         # Get Git commit
         try:
             git_commit = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-                )
+                subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
                 .decode()
                 .strip()
             )
@@ -6994,9 +6736,10 @@ class ModelManager:
             project_root = Path(__file__).parent.parent.parent
 
         # Handle config.yaml path resolution
-        config_path_obj = Path(config_path)
+        _config_path_obj: Path = Path(config_path)
+        _config_path_found: Path | None = None
 
-        if not config_path_obj.is_absolute():
+        if not _config_path_obj.is_absolute():
             search_paths = [
                 project_root / "configs" / config_path,
                 project_root / config_path,
@@ -7004,22 +6747,21 @@ class ModelManager:
                 Path.cwd() / "configs" / config_path,
             ]
 
-            config_path_obj = None
             for search_path in search_paths:
                 if search_path.exists():
-                    config_path_obj = search_path
+                    _config_path_found = search_path
                     break
 
-            if config_path_obj is None:
-                logger.warning(f"⚠️  config.yaml not found")
+            if _config_path_found is None:
+                logger.warning("⚠️  config.yaml not found")
                 config_checksum = "not_found"
             else:
-                with open(config_path_obj, "rb") as f:
-                    config_checksum = hashlib.md5(f.read()).hexdigest()
+                with open(_config_path_found, "rb") as f:
+                    config_checksum = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
         else:
-            if config_path_obj.exists():
-                with open(config_path_obj, "rb") as f:
-                    config_checksum = hashlib.md5(f.read()).hexdigest()
+            if _config_path_obj.exists():
+                with open(_config_path_obj, "rb") as f:
+                    config_checksum = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
             else:
                 config_checksum = "not_found"
 
@@ -7029,7 +6771,7 @@ class ModelManager:
             "training_date": datetime.now().isoformat(),
             "git_commit": git_commit,
             "config_checksum": config_checksum,
-            "config_path": str(config_path_obj) if config_path_obj else "not_found",
+            "config_path": str(_config_path_found or _config_path_obj),
             "metrics": {k: float(v) for k, v in metrics.items()},
             "feature_names": list(feature_names),
             "n_features": len(feature_names),
@@ -7105,7 +6847,7 @@ if __name__ == "__main__":
         manager.print_gpu_status()
 
         print("✅ ModelManager ready for production!")
-        print(f"\n🔥 Total optimization impact: 30-60% faster training pipelines")
+        print("\n🔥 Total optimization impact: 30-60% faster training pipelines")
 
     except ImportError:
         print("⚠️  Config module not found")

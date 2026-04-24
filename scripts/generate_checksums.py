@@ -80,16 +80,13 @@ def verify_checksums(model_dir: Path) -> list[str]:
         stored = checksum_file.read_text().strip()
         live = compute_sha256(src)
         if live != stored:
-            failures.append(
-                f"  {src.name}: stored={stored[:16]}...  live={live[:16]}..."
-            )
+            failures.append(f"  {src.name}: stored={stored[:16]}...  live={live[:16]}...")
         else:
             verified.append(src.stem)
 
     if failures:
         raise ChecksumMismatch(
-            "Checksum verification failed for the following artifacts:\n"
-            + "\n".join(failures)
+            "Checksum verification failed for the following artifacts:\n" + "\n".join(failures)
         )
 
     return verified

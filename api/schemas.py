@@ -2,29 +2,13 @@
 API Schemas - Insurance Cost Predictor
 Pydantic v2 request/response models aligned with predict.py v6.3.3
 
-Changes vs original:
-  W03   HealthResponse exposes valid_regions, valid_sex, valid_smoker for
-        Streamlit schema drift detection.
-  CI    PredictResponse gains optional CI fields.
-  #6    MetricsResponse added for /api/v1/metrics endpoint.
-
-FIX H8 (v7.5.1): Align validation bounds with config.yaml features section.
-  Previous schema was more restrictive than the pipeline it wraps:
-    bmi:      le=60  → le=100   (config.yaml bmi_max=100.0)
-    children: le=10  → le=20    (config.yaml children_max=20)
-    age:      le=100 → le=120   (config.yaml age_max=120.0)
-  age ge=18 retained: the API serves policy-holders (adults); child dependents
-  are covered under a parent policy and should not call this endpoint directly.
-  SOURCE OF TRUTH: config.yaml features.{age,bmi,children}_{min,max}.
-  If those values change, update the Field constraints here to match.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # =============================================================================
 # VALIDATION CONSTANTS
@@ -32,16 +16,14 @@ from pydantic import BaseModel, Field, field_validator
 
 VALID_SEX: frozenset[str] = frozenset({"male", "female"})
 VALID_SMOKER: frozenset[str] = frozenset({"yes", "no"})
-VALID_REGIONS: frozenset[str] = frozenset(
-    {"northeast", "northwest", "southeast", "southwest"}
-)
+VALID_REGIONS: frozenset[str] = frozenset({"northeast", "northwest", "southeast", "southwest"})
 
 
 # =============================================================================
 # BATCH SIZE CONSTANT
 # =============================================================================
 
-# M-02 FIX: max batch size as a named constant rather than a bare literal.
+# max batch size as a named constant rather than a bare literal.
 # THIS VALUE MUST STAY IN SYNC WITH prediction.max_batch_size in config.yaml.
 # If you raise the config limit, update this constant and restart the API.
 # A mismatch causes the Pydantic gate (422) and the pipeline gate (ValueError)
@@ -50,7 +32,7 @@ _MAX_BATCH_SIZE: int = 50_000
 
 
 class PredictRequest(BaseModel):
-    # Bounds aligned with config.yaml features section (FIX H8).
+    # Bounds aligned with config.yaml features section.
     # age ge=18: policy-holder minimum (adults only at this endpoint).
     # age le=120, bmi le=100, children le=20: match config.yaml maximums exactly.
     age: int = Field(..., ge=18, le=120)
@@ -81,9 +63,7 @@ class PredictRequest(BaseModel):
     def validate_region(cls, v: str) -> str:
         n = v.strip().lower()
         if n not in VALID_REGIONS:
-            raise ValueError(
-                f"region must be one of {sorted(VALID_REGIONS)}, got '{v}'"
-            )
+            raise ValueError(f"region must be one of {sorted(VALID_REGIONS)}, got '{v}'")
         return n
 
     model_config = {
@@ -120,34 +100,34 @@ class PredictResponse(BaseModel):
 
     prediction: float
     model_used: str
-    prediction_id: Optional[str] = None
-    lower_bound: Optional[float] = Field(None, description="Lower CI bound (USD)")
-    upper_bound: Optional[float] = Field(None, description="Upper CI bound (USD)")
-    ci_confidence_level: Optional[float] = Field(None, description="e.g. 0.90")
-    ci_method: Optional[str] = Field(
+    prediction_id: str | None = None
+    lower_bound: float | None = Field(None, description="Lower CI bound (USD)")
+    upper_bound: float | None = Field(None, description="Upper CI bound (USD)")
+    ci_confidence_level: float | None = Field(None, description="e.g. 0.90")
+    ci_method: str | None = Field(
         None,
         description="heteroscedastic_conformal | split_conformal | parametric_gaussian_fallback",
     )
-    ci_width_pct: Optional[float] = Field(
+    ci_width_pct: float | None = Field(
         None,
         description="CI width as % of point estimate: (upper-lower)/prediction * 100",
     )
-    # P2-D FIX: machine-readable flag so callers don't have to implement their
+    # machine-readable flag so callers don't have to implement their
     # own threshold check on ci_width_pct.  True when ci_width_pct > 80 — at
     # that width the interval spans more than the point estimate itself and
     # provides no actionable pricing signal.  Threshold is conservative; the
     # problematic transition-zone case logged 118.8%.
-    ci_unreliable: Optional[bool] = Field(
+    ci_unreliable: bool | None = Field(
         None,
         description=(
             "True when ci_width_pct > 80%% — interval too wide for rate-setting. "
             "Downstream systems should route to manual review rather than using the CI."
         ),
     )
-    # P3-B FIX: expose the actuarial/ML ratio so callers can handle high-
+    # expose the actuarial/ML ratio so callers can handle high-
     # disagreement cases (e.g. route to manual review when ratio > 1.15).
     # Value is the median(actuarial / ml_calibrated) from HybridPredictor.
-    actuarial_ml_ratio: Optional[float] = Field(
+    actuarial_ml_ratio: float | None = Field(
         None,
         description=(
             "Median actuarial/ML ratio from HybridPredictor. "
@@ -172,9 +152,9 @@ class PredictResponse(BaseModel):
 
 class BatchPredictRecord(BaseModel):
     index: int
-    prediction: Optional[float] = None
-    model_used: Optional[str] = None
-    error: Optional[str] = None
+    prediction: float | None = None
+    model_used: str | None = None
+    error: str | None = None
     status: str
 
 
@@ -192,7 +172,7 @@ class BatchPredictResponse(BaseModel):
             "Use POST /api/v1/predict for per-record CI."
         ),
     )
-    ci_unavailable_reason: Optional[str] = Field(
+    ci_unavailable_reason: str | None = Field(
         None,
         description="Human-readable explanation of why CI is not available for this response.",
     )
@@ -201,18 +181,18 @@ class BatchPredictResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     model_name: str
-    pipeline_version: Optional[str] = None
-    hybrid_version: Optional[str] = None
-    detail: Optional[str] = None
-    valid_regions: Optional[list[str]] = None
-    valid_sex: Optional[list[str]] = None
-    valid_smoker: Optional[list[str]] = None
+    pipeline_version: str | None = None
+    hybrid_version: str | None = None
+    detail: str | None = None
+    valid_regions: list[str] | None = None
+    valid_sex: list[str] | None = None
+    valid_smoker: list[str] | None = None
 
 
 class TargetTransformationInfo(BaseModel):
     method: str
     bias_correction: bool
-    bias_correction_variance: Optional[float] = None
+    bias_correction_variance: float | None = None
     recommended_metrics: list[str] = []
     deprecated_metrics: list[str] = []
 
@@ -222,10 +202,10 @@ class ModelInfoResponse(BaseModel):
     model_type: str
     pipeline_version: str
     target_transformation: TargetTransformationInfo
-    feature_count: Optional[Any] = None
+    feature_count: Any | None = None
     has_feature_importances: bool = False
     has_coefficients: bool = False
-    pipeline_state: Optional[str] = None
+    pipeline_state: str | None = None
 
 
 # =============================================================================
@@ -269,5 +249,5 @@ class MetricsResponse(BaseModel):
     predictions: PredictionMetrics
     latency_ms: LatencyMetrics
     model_name: str
-    hybrid_version: Optional[str] = None
-    pipeline_version: Optional[str] = None
+    hybrid_version: str | None = None
+    pipeline_version: str | None = None

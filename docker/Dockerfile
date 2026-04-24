@@ -22,7 +22,7 @@
 #   the 7 GB CUDA base image for them would be wasteful. Multi-stage builds
 #   allow mixing base images freely — each stage is independent.
 #
-# FIX [PB2]: Previously all stages inherited from a single 'base' that included
+# Previously all stages inherited from a single 'base' that included
 #   build-essential / gcc / g++ / gfortran. Since prod was FROM base, compilers
 #   were present in the production image, inflating attack surface and image size.
 #   The base is now split:
@@ -30,7 +30,7 @@
 #     base-build    — base-runtime + compilers (builder only)
 #   prod is now FROM base-runtime, so compilers are never copied or inherited.
 #
-# FIX [SEC-1]: libopenblas-dev, liblapack-dev, wget, git removed from
+# libopenblas-dev, liblapack-dev, wget, git removed from
 #   base-runtime. These are build-time dependencies only:
 #     - libopenblas-dev / liblapack-dev: C headers needed to compile numpy/scipy
 #       wheels from source. Pre-built wheels bundle BLAS routines internally —
@@ -40,13 +40,13 @@
 #       git clone from inside a compromised container.
 #   All four moved to base-build where they are legitimately required.
 #
-# FIX [SEC-2]: TZ=Asia/Kolkata removed from ENV. Baking a locale into the
+# TZ=Asia/Kolkata removed from ENV. Baking a locale into the
 #   image makes it non-portable and leaks developer environment info to any
 #   public registry push. Set TZ at runtime via docker-compose environment:
 #   or -e TZ=Asia/Kolkata. Default container TZ is UTC, which is correct for
 #   production log timestamps.
 #
-# FIX [D1-P1]: mlflow and optuna services previously used image: python:3.11-slim
+# mlflow and optuna services previously used image: python:3.11-slim
 #   with inline bash -c "pip install ... && ..." commands. This ran 25-60s of
 #   network-dependent installation on every container start and blocked dependent
 #   services. Both are now pre-baked stages in this file.
@@ -74,7 +74,7 @@
 # -----------------------------------------------------------------------------
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base-runtime
 
-# FIX [PB3]: inline comments removed from ENV continuation blocks.
+# inline comments removed from ENV continuation blocks.
 # Docker BuildKit handles them, but the classic builder (DOCKER_BUILDKIT=0)
 # fails to parse '#' tokens inside multi-line ENV declarations.
 # Comments now appear as standalone lines above the ENV block they describe.
@@ -224,7 +224,7 @@ USER appuser
 
 EXPOSE 8000 8501
 
-# M4 FIX: embed health check so standalone `docker run` and orchestrators that
+# embed health check so standalone `docker run` and orchestrators that
 # don't use docker-compose (k8s, ECS, etc.) report correct container health.
 # start_period=90s: API loads ~16 joblib models at startup.
 # Matches docker-compose.yml api healthcheck parameters exactly.
@@ -405,7 +405,7 @@ CMD ["mlflow", "server", \
 # Pre-baked Optuna dashboard.
 # Intentionally FROM python:3.11-slim — CPU-only, no CUDA needed.
 #
-# FIX [D2-P2]: optuna-dashboard pinned to 0.20.0 to match pyproject.toml
+# optuna-dashboard pinned to 0.20.0 to match pyproject.toml
 # [dev] extras. The previous docker-compose inline install used 0.17.0,
 # a three-minor-version gap that caused schema warnings with optuna==4.5.0.
 #

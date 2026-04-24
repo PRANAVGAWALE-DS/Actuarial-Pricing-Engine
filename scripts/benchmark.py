@@ -13,7 +13,6 @@ import os
 import time
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -52,7 +51,7 @@ class BenchmarkRunner:
         except ImportError:
             logger.warning("TensorFlow not available")
 
-    def benchmark_torch(self, device: str = "cpu") -> Dict[str, float]:
+    def benchmark_torch(self, device: str = "cpu") -> dict[str, float]:
         """Benchmark PyTorch operations."""
         if not self.torch_available:
             logger.warning("PyTorch not available, skipping PyTorch benchmark")
@@ -131,7 +130,7 @@ class BenchmarkRunner:
 
         return results
 
-    def benchmark_tensorflow(self, device: str = "cpu") -> Dict[str, float]:
+    def benchmark_tensorflow(self, device: str = "cpu") -> dict[str, float]:
         """Benchmark TensorFlow operations."""
         if not self.tf_available:
             logger.warning("TensorFlow not available, skipping TensorFlow benchmark")
@@ -177,7 +176,7 @@ class BenchmarkRunner:
 
         return results
 
-    def benchmark_numpy(self) -> Dict[str, float]:
+    def benchmark_numpy(self) -> dict[str, float]:
         """Benchmark NumPy operations (CPU only)."""
         logger.info("Running NumPy benchmark...")
         results = {}

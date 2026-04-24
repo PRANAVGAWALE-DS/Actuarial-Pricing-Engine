@@ -514,3 +514,8 @@ docs/dist/
 .model_json_bak/
 # Plain .env (no extension suffix)
 .env
+
+reports/
+
+# Secret — never commit
+.env.docker

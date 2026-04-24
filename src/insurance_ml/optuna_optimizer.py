@@ -4,10 +4,11 @@ import logging
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import joblib
 import numpy as np
@@ -175,7 +176,7 @@ class OptunaOptimizer:
         y_true: np.ndarray,
         y_pred: np.ndarray,
         alpha: float,
-        sample_weight: Optional[np.ndarray] = None,
+        sample_weight: np.ndarray | None = None,
     ) -> float:
         """
         Pinball (quantile) loss — the mathematically correct evaluation metric
@@ -214,10 +215,10 @@ class OptunaOptimizer:
 
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         pipeline_version: str = "4.3.0",
         use_gpu: bool = False,
-        model_manager: Optional[ModelManager] = None,
+        model_manager: ModelManager | None = None,
     ) -> None:
         """
         Initialize Optuna optimizer with VALIDATED config access.
@@ -272,15 +273,15 @@ class OptunaOptimizer:
         # State management
         self._state = OptimizationState.INITIALIZED
         self._current_trial = 0
-        self._performance_metrics: Dict[str, float] = {}
+        self._performance_metrics: dict[str, float] = {}
 
         # Model management
         self.model_config = config.get("models", {})
         self.model_manager = model_manager or ModelManager(config)
-        self._current_encoder: Optional[FeatureEngineer] = None
+        self._current_encoder: FeatureEngineer | None = None
 
         # GPU PARAMETER CACHE
-        self._gpu_params_cache: Dict[str, Dict[str, Any]] = {}
+        self._gpu_params_cache: dict[str, dict[str, Any]] = {}
         self._gpu_cache_lock = threading.Lock()
         self._gpu_conflict_warned: set = set()
         self._gpu_conflict_warned_lock = threading.Lock()
@@ -305,7 +306,7 @@ class OptunaOptimizer:
     # =================================================================
     # GPU PARAMETER CACHING
     # =================================================================
-    def _get_cached_gpu_params(self, model_name: str) -> Dict[str, Any]:
+    def _get_cached_gpu_params(self, model_name: str) -> dict[str, Any]:
         """
         Get GPU parameters with caching to avoid redundant config lookups.
 
@@ -347,7 +348,7 @@ class OptunaOptimizer:
                     f"GPU may be disabled or not available."
                 )
 
-            return gpu_params.copy()
+            return dict(gpu_params.copy())
 
     # =================================================================
     # CONTEXT MANAGERS
@@ -452,7 +453,7 @@ class OptunaOptimizer:
         if not isinstance(X_train, pd.DataFrame):
             raise ValidationError(f"X_train must be DataFrame, got {type(X_train)}")
 
-        if not isinstance(y_train, (pd.Series, np.ndarray)):
+        if not isinstance(y_train, pd.Series | np.ndarray):
             raise ValidationError(f"y_train must be Series/ndarray, got {type(y_train)}")
 
         if len(X_train) == 0:
@@ -465,7 +466,7 @@ class OptunaOptimizer:
             null_cols = X_train.columns[X_train.isna().any()].tolist()
             null_counts = X_train[null_cols].isna().sum()
             raise ValidationError(
-                f"X_train contains NaN values:\n"
+                "X_train contains NaN values:\n"
                 + "\n".join([f"  {col}: {count}" for col, count in null_counts.items()])
             )
 
@@ -496,7 +497,7 @@ class OptunaOptimizer:
             f"{len(X_train)} samples, {len(X_train.columns)} features"
         )
 
-    def _validate_study_dir(self, study_dir: Optional[str]) -> Path:
+    def _validate_study_dir(self, study_dir: str | None) -> Path:
         """Validate study directory with defense-in-depth security"""
         if study_dir is None:
             return self.study_base_dir
@@ -510,7 +511,7 @@ class OptunaOptimizer:
             raise ValidationError(
                 f"❌ Access denied: {requested_path} is outside {base_resolved}\n"
                 f"   Study directories must be within {base_resolved}"
-            )
+            ) from None
 
         if ".." in requested_path.parts:
             raise ValidationError(
@@ -526,8 +527,8 @@ class OptunaOptimizer:
         return requested_path
 
     def _validate_sample_weight(
-        self, sample_weight: Optional[Union[np.ndarray, list]], expected_length: int
-    ) -> Optional[np.ndarray]:
+        self, sample_weight: np.ndarray | list | None, expected_length: int
+    ) -> np.ndarray | None:
         """Validate sample weights"""
         if sample_weight is None:
             return None
@@ -536,7 +537,7 @@ class OptunaOptimizer:
             try:
                 sample_weight = np.array(sample_weight)
             except Exception as e:
-                raise ValidationError(f"Cannot convert sample_weight to array: {e}")
+                raise ValidationError(f"Cannot convert sample_weight to array: {e}") from e
 
         if len(sample_weight) != expected_length:
             raise ValidationError(
@@ -703,8 +704,8 @@ class OptunaOptimizer:
         return "quantile" in obj
 
     def _filter_xgb_quantile_params(
-        self, params: Dict[str, Any], model_name: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], model_name: str
+    ) -> dict[str, Any]:
         """
         Strip classification-only XGBoost parameters before constructing a
         quantile regression model.
@@ -742,27 +743,29 @@ class OptunaOptimizer:
     def _get_sampler(self, model_name: str = "") -> BaseSampler:
         """Get Optuna sampler with a model-specific seed offset.
 
-        BUG-3 FIX (v7.5.0): When two studies share the same base sampler seed
+        (v7.5.0): When two studies share the same base sampler seed
         (optuna.sampler.seed = 42 for both pricing and risk models), TPESampler
         produces the same random sequence for Trial 0 in each study.  With
         storage=null (in-memory) this means both models suggest identical
         hyperparameters on the first trial, wasting the initial exploration
         budget.
 
-        Fix: derive a deterministic per-model seed offset from the model name
+        derive a deterministic per-model seed offset from the model name
         so every model gets a distinct, reproducible RNG stream while the base
         seed (random_state: 42) remains the single source of truth in config.
         The offset is name-hash modulo a prime (997) — small enough to prevent
         accidental seed collisions while keeping values well within int32 range.
         """
         base_seed = self.optuna_config["sampler_seed"]
-        # OT-02 FIX: Replace Python's built-in hash() with hashlib.md5.
+        # Replace Python's built-in hash() with hashlib.md5.
         # hash() is randomised by PYTHONHASHSEED (default since Python 3.3), so
         # two separate processes produce different offsets for the same model_name,
         # breaking cross-run reproducibility even when random_state is identical.
         # hashlib.md5 is stable across Python versions and processes.
         if model_name:
-            model_seed_offset = int(hashlib.md5(model_name.encode()).hexdigest(), 16) % 997
+            model_seed_offset = (
+                int(hashlib.md5(model_name.encode(), usedforsecurity=False).hexdigest(), 16) % 997
+            )
         else:
             model_seed_offset = 0
         seed = base_seed + model_seed_offset
@@ -790,7 +793,7 @@ class OptunaOptimizer:
             logger.warning(f"Unknown sampler '{sampler_type}', using TPE")
             return TPESampler(seed=seed)
 
-    def _get_pruner(self) -> Optional[BasePruner]:
+    def _get_pruner(self) -> BasePruner | None:
         """Get Optuna pruner"""
         pruner_type = self.optuna_config["pruner_type"]
 
@@ -833,7 +836,7 @@ class OptunaOptimizer:
     # =================================================================
 
     def _suggest_hyperparameter(
-        self, trial: optuna.Trial, param_name: str, param_config: Dict[str, Any]
+        self, trial: optuna.Trial, param_name: str, param_config: dict[str, Any]
     ) -> Any:
         """Suggest hyperparameter value based on config"""
         param_type = param_config.get("type", "float")
@@ -857,11 +860,11 @@ class OptunaOptimizer:
             else:
                 raise ValidationError(f"Unknown parameter type: {param_type}")
         except KeyError as e:
-            raise ValidationError(f"Missing key in param_config for '{param_name}': {e}")
+            raise ValidationError(f"Missing key in param_config for '{param_name}': {e}") from e
 
     def _suggest_constrained_params(
-        self, trial: optuna.Trial, model_name: str, gpu_params: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, trial: optuna.Trial, model_name: str, gpu_params: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Suggest constrained parameters for tree models
 
@@ -1014,7 +1017,7 @@ class OptunaOptimizer:
         weighted_pb = self._calculate_weighted_pinball(y_true, y_pred, alpha=alpha)
         rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
-        return (
+        return float(
             weights["standard"] * pinball  # 0.50 × pinball (was standard RMSE)
             + weights["weighted"] * weighted_pb  # 0.30 × weighted pinball (was weighted RMSE)
             + weights["balanced"] * rmse  # 0.20 × RMSE (was balanced RMSE — retains symmetry check)
@@ -1068,7 +1071,7 @@ class OptunaOptimizer:
 
     def _calculate_overfitting_penalty(
         self, train_rmse: float, val_rmse: float
-    ) -> Tuple[float, float, str]:
+    ) -> tuple[float, float, str]:
         """Calculate overfitting penalty"""
         if train_rmse == 0 or np.isclose(train_rmse, 0, atol=1e-10):
             logger.warning(f"Train RMSE is zero or near-zero: {train_rmse}")
@@ -1106,9 +1109,9 @@ class OptunaOptimizer:
         model_name: str,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        sample_weight: Optional[np.ndarray] = None,
-        target_transformation: Optional[TargetTransformation] = None,
-        feature_engineer: Optional[Any] = None,
+        sample_weight: np.ndarray | None = None,
+        target_transformation: TargetTransformation | None = None,
+        feature_engineer: Any | None = None,
     ) -> Callable:
         """
         Create OPTIMIZED objective function for Optuna
@@ -1146,10 +1149,11 @@ class OptunaOptimizer:
 
         sample_weight_array = None
         if sample_weight is not None:
-            if not isinstance(sample_weight, np.ndarray):
-                sample_weight_array = np.array(sample_weight)
-            else:
-                sample_weight_array = sample_weight
+            sample_weight_array = (
+                np.array(sample_weight)
+                if not isinstance(sample_weight, np.ndarray)
+                else sample_weight
+            )
 
             # Log sample weight stats once
             logger.info(
@@ -1174,7 +1178,7 @@ class OptunaOptimizer:
         logger.info("✅ Data validation passed (skipping per-trial checks)")
 
         # 4. SETUP CV ONCE (not per trial)
-        # ── F-02 FIX: Honour cv_stratified config flag ──
+        # Honour cv_stratified config flag ──
         # Insurance charges are highly skewed (smokers $15k-$60k vs non-smokers $1k-$15k).
         # Non-stratified folds may have near-zero high-charge samples, biasing HPO toward
         # hyperparameters that overfit the majority distribution.
@@ -1193,7 +1197,7 @@ class OptunaOptimizer:
                 n_splits=cv_n_splits, shuffle=cv_shuffle, random_state=cv_random_state
             )
             # StratifiedKFold.split() requires the stratification labels as second arg
-            _cv_split_args = (X_train_encoded, _y_binned)
+            _cv_split_args: tuple[Any, ...] = (X_train_encoded, _y_binned)
             logger.info(
                 f"✅ CV: StratifiedKFold(n_splits={cv_n_splits}, n_bins={_n_bins}) — "
                 f"target binned into {len(set(_y_binned))} strata"
@@ -1248,7 +1252,7 @@ class OptunaOptimizer:
             default_params["verbose"] = -1
 
         # ── base_score: warm-start conditioned on objective + transform ──────
-        # OT-01 FIX: base_score must be conditioned on the active transform.
+        # base_score must be conditioned on the active transform.
         #
         # Yeo-Johnson / log1p: mean(y_train_array) is a valid warm-start for
         #   squarederror because the transformed values are bounded (~8–15 for YJ).
@@ -1257,7 +1261,7 @@ class OptunaOptimizer:
         #   Setting base_score=13000 causes massive negative gradients in early
         #   rounds — destabilising learning. Use median instead (robust to outliers).
         #
-        # QUANTILE FIX: For reg:quantileerror at alpha=A, the optimal warm-start
+        # For reg:quantileerror at alpha=A, the optimal warm-start
         #   is the A-th percentile of y_train, NOT the mean. Initialising at the
         #   mean (above the A-th percentile for right-skewed data) forces every
         #   boosting round to correct a systematic upward bias, consuming tree
@@ -1320,7 +1324,7 @@ class OptunaOptimizer:
         # 9. CHECK MODEL TYPE ONCE
         is_tree_model = model_name.lower() in [
             "xgboost",
-            "xgboost_median",  # FIX-1a: was absent → non-tree path → zero Optuna params
+            "xgboost_median",
             "lightgbm",
             "lgb",
             "lgbm",
@@ -1349,7 +1353,7 @@ class OptunaOptimizer:
         # Pre-compute quantile_alpha for pinball scoring.
         # v7.4.5: scoring now uses the same asymmetric loss as training.
         # Resolved once here so the inner closure doesn't re-read config per fold.
-        _quantile_alpha: Optional[float] = None
+        _quantile_alpha: float | None = None
         if _strip_classification_params:
             _quantile_alpha = self._get_quantile_alpha(model_name)
             logger.info(
@@ -1402,14 +1406,14 @@ class OptunaOptimizer:
                     logger.info("=" * 80)
                     logger.info("🔍 PARAMETER FLOW DIAGNOSTIC")
                     logger.info("=" * 80)
-                    logger.info(f"\n1️⃣ CACHED_GPU_PARAMS (from get_model_gpu_params):")
+                    logger.info("\n1️⃣ CACHED_GPU_PARAMS (from get_model_gpu_params):")
                     logger.info(f"   {cached_gpu_params}")
 
-                    logger.info(f"\n2️⃣ DEFAULT_PARAMS:")
+                    logger.info("\n2️⃣ DEFAULT_PARAMS:")
                     logger.info(f"   {default_params}")
 
                     logger.info(
-                        f"\n3️⃣ PARAMS (after _suggest_constrained_params, BEFORE default merge):"
+                        "\n3️⃣ PARAMS (after _suggest_constrained_params, BEFORE default merge):"
                     )
                     logger.info(f"   {params}")
 
@@ -1425,9 +1429,9 @@ class OptunaOptimizer:
                 # 🔍 DIAGNOSTIC 2: After default merge
                 # ==========================================
                 if trial.number == 0:
-                    logger.info(f"\n4️⃣ PARAMS (AFTER merging with default_params):")
+                    logger.info("\n4️⃣ PARAMS (AFTER merging with default_params):")
                     logger.info(f"   {params}")
-                    logger.info(f"\n   KEY GPU PARAMETERS:")
+                    logger.info("\n   KEY GPU PARAMETERS:")
                     logger.info(f"   - device: {params.get('device', 'NOT SET')}")
                     logger.info(f"   - tree_method: {params.get('tree_method', 'NOT SET')}")
                     logger.info(f"   - gpu_platform_id: {params.get('gpu_platform_id', 'NOT SET')}")
@@ -1443,9 +1447,9 @@ class OptunaOptimizer:
                 # 🔍 DIAGNOSTIC 3: GPU flag validation
                 # ==========================================
                 if trial.number == 0:
-                    logger.info(f"\n5️⃣ GPU FLAG DETECTION:")
+                    logger.info("\n5️⃣ GPU FLAG DETECTION:")
                     logger.info(f"   has_gpu_params = {has_gpu_params}")
-                    logger.info(f"   Keys checked: ['device', 'gpu_platform_id', 'tree_method']")
+                    logger.info("   Keys checked: ['device', 'gpu_platform_id', 'tree_method']")
 
                     # Validate actual GPU values
                     if has_gpu_params:
@@ -1481,7 +1485,7 @@ class OptunaOptimizer:
                                 logger.info(f"   ✅ tree_method='{params['tree_method']}' (valid)")
                         else:
                             logger.info(
-                                f"   ✅ tree_method not set (XGBoost 3.0+ infers from device)"
+                                "   ✅ tree_method not set (XGBoost 3.0+ infers from device)"
                             )
 
                         if "n_jobs" in params:
@@ -1489,7 +1493,7 @@ class OptunaOptimizer:
                                 logger.error(
                                     f"   ❌ n_jobs={params['n_jobs']} (should be 1 for GPU)"
                                 )
-                                logger.error(f"      CPU parallelization conflicts with GPU!")
+                                logger.error("      CPU parallelization conflicts with GPU!")
                                 gpu_valid = False
                             else:
                                 logger.info(f"   ✅ n_jobs={params['n_jobs']} (correct)")
@@ -1521,9 +1525,9 @@ class OptunaOptimizer:
                                 )
 
                         if not gpu_valid:
-                            logger.error(f"\n   🚨 GPU/MODEL CONFIGURATION INVALID")
+                            logger.error("\n   🚨 GPU/MODEL CONFIGURATION INVALID")
                     else:
-                        logger.warning(f"   ⚠️ has_gpu_params=False - No GPU keys detected")
+                        logger.warning("   ⚠️ has_gpu_params=False - No GPU keys detected")
 
                 # CV LOOP
                 cv_scores = []
@@ -1543,14 +1547,14 @@ class OptunaOptimizer:
                     # 🔍 DIAGNOSTIC 4: GPU memory before model creation
                     # ==========================================
                     if trial.number == 0 and fold_idx == 0:
-                        logger.info(f"\n6️⃣ FOLD 0 DIAGNOSTIC:")
+                        logger.info("\n6️⃣ FOLD 0 DIAGNOSTIC:")
                         logger.info(f"   Training samples: {len(train_idx):,}")
                         logger.info(f"   Features: {X_train_fold.shape[1]}")
 
                         if self._gpu_available:
                             gpu_mem_before = get_gpu_memory_usage()
                             if gpu_mem_before:
-                                logger.info(f"\n   GPU MEMORY (before model creation):")
+                                logger.info("\n   GPU MEMORY (before model creation):")
                                 logger.info(
                                     f"   - Allocated: {gpu_mem_before['allocated_mb']:.1f} MB"
                                 )
@@ -1564,7 +1568,7 @@ class OptunaOptimizer:
                     fold_model = self.model_manager.get_model(
                         model_name, params=params, gpu=has_gpu_params
                     )
-                    # FIX: XGBoost reg:quantileerror requires quantile_alpha
+                    # XGBoost reg:quantileerror requires quantile_alpha
                     # to be set explicitly — it has no internal default.
                     # Patch it immediately after creation, before .fit().
                     fold_model = self._patch_xgb_quantile_alpha(fold_model, model_name)
@@ -1573,14 +1577,14 @@ class OptunaOptimizer:
                     # 🔍 DIAGNOSTIC 5: Verify model received GPU params
                     # ==========================================
                     if trial.number == 0 and fold_idx == 0:
-                        logger.info(f"\n7️⃣ MODEL CREATION VERIFICATION:")
+                        logger.info("\n7️⃣ MODEL CREATION VERIFICATION:")
                         logger.info(f"   Model type: {type(fold_model).__name__}")
                         logger.info(f"   GPU flag passed to get_model(): {has_gpu_params}")
 
                         # Try to get actual params from model
                         if hasattr(fold_model, "get_params"):
                             actual_params = fold_model.get_params()
-                            logger.info(f"\n   ACTUAL MODEL PARAMETERS:")
+                            logger.info("\n   ACTUAL MODEL PARAMETERS:")
                             for key in [
                                 "device",
                                 "tree_method",
@@ -1612,14 +1616,14 @@ class OptunaOptimizer:
                         train_time = time.perf_counter() - train_start
                         gpu_mem_after = get_gpu_memory_usage()
 
-                        logger.info(f"\n8️⃣ TRAINING DIAGNOSTIC:")
+                        logger.info("\n8️⃣ TRAINING DIAGNOSTIC:")
                         logger.info(f"   Training time: {train_time:.3f}s")
 
                         if gpu_mem_before and gpu_mem_after:
                             mem_increase = (
                                 gpu_mem_after["allocated_mb"] - gpu_mem_before["allocated_mb"]
                             )
-                            logger.info(f"\n   GPU MEMORY CHANGE:")
+                            logger.info("\n   GPU MEMORY CHANGE:")
                             logger.info(f"   - Before: {gpu_mem_before['allocated_mb']:.1f} MB")
                             logger.info(f"   - After: {gpu_mem_after['allocated_mb']:.1f} MB")
                             logger.info(f"   - Increase: {mem_increase:.1f} MB")
@@ -1858,7 +1862,7 @@ class OptunaOptimizer:
                 raise
 
             except Exception as e:
-                # FIX-1 (v7.4.4): Re-raise as TrialFailed, NOT TrialPruned.
+                # (v7.4.4): Re-raise as TrialFailed, NOT TrialPruned.
                 #
                 # The old code caught every exception and re-raised it as
                 # optuna.TrialPruned(). This had two catastrophic effects:
@@ -1884,7 +1888,7 @@ class OptunaOptimizer:
                     f"   Full traceback:",
                     exc_info=True,
                 )
-                # FIX: optuna.exceptions.TrialFailed does not exist in any
+                # optuna.exceptions.TrialFailed does not exist in any
                 # released version of Optuna.  Raising it caused an
                 # AttributeError that cascaded into killing the entire study
                 # instead of just marking this one trial as FAILED.
@@ -1904,7 +1908,7 @@ class OptunaOptimizer:
     def _create_early_stopping_callback(self):
         """Create early stopping callback with relative improvement threshold.
 
-        OT-04 FIX: The original absolute threshold (e.g. 0.001) is not scale-aware.
+        The original absolute threshold (e.g. 0.001) is not scale-aware.
         For pinball loss in dollar space (range 500–2000) it never triggers; for RMSE
         in YJ space (range 0.1–2.0) it is meaningful.  Replaced with a relative check:
             improvement = (prev_best - current) / abs(prev_best)
@@ -1958,9 +1962,7 @@ class OptunaOptimizer:
     # STUDY MANAGEMENT
     # =================================================================
 
-    def _create_or_load_study(
-        self, model_name: str, study_dir: Optional[str] = None
-    ) -> optuna.Study:
+    def _create_or_load_study(self, model_name: str, study_dir: str | None = None) -> optuna.Study:
         """Create or load Optuna study"""
         self._validate_study_dir(study_dir)
 
@@ -1968,7 +1970,7 @@ class OptunaOptimizer:
         storage = self.optuna_config.get("storage")
 
         pruner = self._get_pruner()
-        sampler = self._get_sampler(model_name)  # BUG-3 FIX: model-specific seed
+        sampler = self._get_sampler(model_name)  # model-specific seed
 
         try:
             study = optuna.create_study(
@@ -1991,7 +1993,7 @@ class OptunaOptimizer:
             raise StudyError(f"Failed to create/load study: {e}") from e
 
     def _save_study_checkpoint(
-        self, study: optuna.Study, model_name: str, study_dir: Optional[str] = None
+        self, study: optuna.Study, model_name: str, study_dir: str | None = None
     ) -> None:
         """Save study checkpoint"""
         study_dir_path = self._validate_study_dir(study_dir)
@@ -2032,11 +2034,11 @@ class OptunaOptimizer:
         model_name: str,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        sample_weight: Optional[Union[np.ndarray, list]] = None,
-        study_dir: Optional[str] = None,
-        target_transformation: Optional[TargetTransformation] = None,
-        feature_engineer: Optional[Any] = None,
-    ) -> Tuple[Any, Dict[str, Any]]:
+        sample_weight: np.ndarray | list | None = None,
+        study_dir: str | None = None,
+        target_transformation: TargetTransformation | None = None,
+        feature_engineer: Any | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
         """Optimize model hyperparameters using Optuna"""
         logger.info(f"\n{'=' * 80}")
         logger.info(f"Optuna Optimization: {model_name}")
@@ -2083,7 +2085,7 @@ class OptunaOptimizer:
 
             # ── P1-A: MLflow per-trial convergence callback ───────────────────
             # Logs trial_value + best_so_far + gap_pct + cv_std at each step.
-            # BUG FIX: study.optimize() fires inside an active MLflow run.
+            # study.optimize() fires inside an active MLflow run.
             # Calling start_run(run_id=X) while X is active raises MlflowException.
             # Solution: check if our run is already active; if so log directly.
             _mlflow_run_id_opt = self.optuna_config.get("_mlflow_run_id")
@@ -2108,7 +2110,10 @@ class OptunaOptimizer:
                                 return
                             try:
                                 _step = trial.number
-                                _sf = lambda v: float(v) if isinstance(v, (int, float)) else None
+
+                                def _sf(v):
+                                    return float(v) if isinstance(v, int | float) else None
+
                                 _active = _mlf_opt.active_run()
 
                                 def _do_log():
@@ -2155,9 +2160,7 @@ class OptunaOptimizer:
                 logger.info(f"  Timeout: {self.optuna_config['timeout']}s")
 
             if model_name.lower() in ["xgboost", "lightgbm", "lgb", "lgbm", "random_forest", "rf"]:
-                logger.info(
-                    f"  🛡️ Overfitting Prevention: ENABLED " f"(constrained hyperparameters)"
-                )
+                logger.info("  🛡️ Overfitting Prevention: ENABLED " "(constrained hyperparameters)")
 
             # SUPPRESS DEBUG LOGGING DURING OPTIMIZATION
             original_level = logging.getLogger().level
@@ -2187,8 +2190,8 @@ class OptunaOptimizer:
                 logging.getLogger().setLevel(original_level)
 
         # ── P1-B: log HPO summary to MLflow after optimization ────────────────
-        # BUG FIX: use optuna.trial.TrialState enum (not .state.name strings).
-        # BUG FIX: active-run check before start_run (same issue as P1-A).
+        # use optuna.trial.TrialState enum (not .state.name strings).
+        # active-run check before start_run (same issue as P1-A).
         _mlflow_run_id_summary = self.optuna_config.get("_mlflow_run_id")
         if _mlflow_run_id_summary:
             try:
@@ -2211,7 +2214,7 @@ class OptunaOptimizer:
                 try:
                     _bt = study.best_trial
                     _hpo_summary["hpo_best_trial_number"] = float(_bt.number)
-                    _hpo_summary["hpo_best_value"] = float(_bt.value)
+                    _hpo_summary["hpo_best_value"] = float(_bt.value or 0.0)
                     _best_std = _bt.user_attrs.get("cv_std")
                     if _best_std is not None:
                         _hpo_summary["hpo_best_cv_std"] = float(_best_std)
@@ -2258,9 +2261,9 @@ class OptunaOptimizer:
         model_name: str,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        sample_weight: Optional[np.ndarray] = None,
-        feature_engineer: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        sample_weight: np.ndarray | None = None,
+        feature_engineer: Any | None = None,
+    ) -> dict[str, Any]:
         """Process optimization results"""
 
         # Count trial states
@@ -2274,7 +2277,7 @@ class OptunaOptimizer:
 
         # Log summary
         logger.info(f"\n{'=' * 80}")
-        logger.info(f"OPTIMIZATION SUMMARY")
+        logger.info("OPTIMIZATION SUMMARY")
         logger.info(f"{'=' * 80}")
         logger.info(f"Total trials:     {len(study.trials)}")
         logger.info(f"✓ Completed:      {len(completed_trials)}")
@@ -2282,7 +2285,7 @@ class OptunaOptimizer:
         logger.info(f"❌ Failed:         {len(failed_trials)}")
 
         if pruned_trials:
-            # FIX-5: intermediate_values keys are 0-based fold indices (0..n_folds-1).
+            # intermediate_values keys are 0-based fold indices (0..n_folds-1).
             # len(keys) = number of folds that ran before TrialPruned was raised.
             # If len == n_folds, ALL folds completed before the prune decision —
             # zero compute was saved. Flag this so it's visible in the log.
@@ -2303,7 +2306,7 @@ class OptunaOptimizer:
                     )
                 )
             else:
-                logger.info(f"Avg pruning at:   N/A (no intermediate values recorded)")
+                logger.info("Avg pruning at:   N/A (no intermediate values recorded)")
 
         logger.info(f"{'=' * 80}")
 
@@ -2319,7 +2322,7 @@ class OptunaOptimizer:
         gap_percent = best_trial.user_attrs.get("gap_percent", 0)
         overfitting_status = best_trial.user_attrs.get("overfitting_status", "unknown")
 
-        logger.info(f"\n✅ Optimization Complete:")
+        logger.info("\n✅ Optimization Complete:")
         logger.info(f"  Best Trial:   #{best_trial.number}/{len(study.trials)}")
         logger.info(f"  Validation score: {val_rmse:.4f}")
         logger.info(f"  Training score:   {train_rmse:.4f}")
@@ -2337,7 +2340,7 @@ class OptunaOptimizer:
         elif gap_percent > warning:
             logger.warning(f"  ⚠️ Moderate overfitting: {gap_percent:.1f}% gap")
         else:
-            logger.info(f"  ✓ Overfitting under control")
+            logger.info("  ✓ Overfitting under control")
 
         # Train final model
         with self._timed_step("Final model training"):
@@ -2349,9 +2352,9 @@ class OptunaOptimizer:
         results = {
             "best_model": best_model,
             "best_params": best_params,
-            "best_value": float(best_value),
+            "best_value": float(best_value or 0.0),
             "train_rmse": float(train_rmse),
-            "val_rmse": float(val_rmse),
+            "val_rmse": float(val_rmse or 0.0),
             "gap_percent": float(gap_percent),
             "overfitting_status": overfitting_status,
             "cv_scores": [float(s) for s in cv_scores],
@@ -2387,11 +2390,11 @@ class OptunaOptimizer:
     def _train_final_model(
         self,
         model_name: str,
-        best_params: Dict[str, Any],
+        best_params: dict[str, Any],
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        sample_weight: Optional[np.ndarray] = None,
-        feature_engineer: Optional[Any] = None,
+        sample_weight: np.ndarray | None = None,
+        feature_engineer: Any | None = None,
     ) -> Any:
         """Train final model with best parameters"""
 
@@ -2463,12 +2466,12 @@ class OptunaOptimizer:
             )
 
             if has_gpu_params:
-                logger.info(f"Training final model with GPU acceleration")
+                logger.info("Training final model with GPU acceleration")
 
             best_model = self.model_manager.get_model(
                 model_name, params=final_params, gpu=has_gpu_params
             )
-            # FIX: XGBoost reg:quantileerror requires quantile_alpha explicitly.
+            # XGBoost reg:quantileerror requires quantile_alpha explicitly.
             best_model = self._patch_xgb_quantile_alpha(best_model, model_name)
 
             # Check if model supports sample weights
@@ -2505,12 +2508,12 @@ class OptunaOptimizer:
 
     def optimize_all_models(
         self,
-        model_names: List[str],
+        model_names: list[str],
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        sample_weight: Optional[Union[np.ndarray, list]] = None,
-        study_dir: Optional[str] = None,
-    ) -> Dict[str, Tuple[Any, Dict[str, Any]]]:
+        sample_weight: np.ndarray | list | None = None,
+        study_dir: str | None = None,
+    ) -> dict[str, tuple[Any, dict[str, Any]]]:
         """Optimize multiple models sequentially"""
         results = {}
 
@@ -2537,7 +2540,7 @@ class OptunaOptimizer:
                 results[model_name] = (None, {"error": str(e)})
 
         logger.info(f"\n{'=' * 80}")
-        logger.info(f"BATCH OPTIMIZATION COMPLETE")
+        logger.info("BATCH OPTIMIZATION COMPLETE")
         successful = len([r for r in results.values() if r[0] is not None])
         logger.info(f"Successful: {successful}/{len(model_names)}")
         logger.info(f"{'=' * 80}\n")
@@ -2548,7 +2551,7 @@ class OptunaOptimizer:
     # UTILITY METHODS
     # =================================================================
 
-    def get_performance_metrics(self) -> Dict[str, float]:
+    def get_performance_metrics(self) -> dict[str, float]:
         """Get performance metrics from last optimization"""
         return self._performance_metrics.copy()
 

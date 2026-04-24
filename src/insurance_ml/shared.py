@@ -94,13 +94,13 @@ class TargetTransformation:
         # Validate original_range
         if self.original_range is not None:
             if len(self.original_range) != 2:
-                raise ValueError(f"original_range must be a tuple of (min, max)")
+                raise ValueError("original_range must be a tuple of (min, max)")
             if self.original_range[0] >= self.original_range[1]:
                 raise ValueError(f"Invalid range: min >= max ({self.original_range})")
 
         # Validate bias correction if present
         if self._log_residual_variance is not None:
-            if not isinstance(self._log_residual_variance, (int, float, np.number)):
+            if not isinstance(self._log_residual_variance, int | float | np.number):
                 raise ValueError(
                     f"_log_residual_variance must be numeric, "
                     f"got {type(self._log_residual_variance)}"

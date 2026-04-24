@@ -2,34 +2,6 @@
 API Routes - Insurance Cost Predictor
 Aligned with HybridPredictor v6.3.3 and PredictionPipeline v6.3.3
 
-Changes vs original:
-  I-01  predict_single / predict_batch: async def → def (FastAPI threadpool).
-  W01   Batch partial-success support (vectorised fast path + per-record fallback).
-  W03   health_check exposes categorical schema for Streamlit drift detection.
-  W07   prediction_id logged server-side for client-log correlation.
-  W08   SHA-256 input hash logged per request (audit trail without PII).
-  W09   Per-request elapsed time logged at route level.
-  CI    predict_single calls predict_with_intervals() for confidence intervals.
-  #6    MetricsCollector + /api/v1/metrics endpoint.
-  #7    threading.Semaphore caps concurrent predictions; returns 429 when full.
-        Configurable via MAX_CONCURRENT_PREDICTIONS env var (default: 10).
-
-FIX C5 (v7.5.1): CI bounds now bracket the hybrid point estimate.
-  Previously _compute_ci() called predictor.ml_predictor.predict_with_intervals()
-  which produces a CI centred on the ML-only prediction. The hybrid prediction
-  (with actuarial blend, churn cap, floor guard) can differ materially from ML
-  for policies in the transition/actuarial zone. The CI is now re-centred by
-  multiplying both bounds by (hybrid_pred / ml_pred).
-
-FIX H7 (v7.5.1): Single inference path for predict_single.
-  predict_with_intervals() is now called first and its internal predict() result
-  is passed into HybridPredictor via _precomputed_ml_result, eliminating the
-  second PredictionPipeline.predict() call that previously doubled latency.
-  Requires predict.py HybridPredictor.predict()'s _precomputed_ml_result param.
-
-FIX H9 (v7.5.1): lower_bound key lookup fixed.
-  predict_with_intervals() populates "lower_bound" (singular list).
-  The dead "lower_bounds" (plural) fallback key is removed.
 """
 
 from __future__ import annotations
@@ -43,18 +15,23 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Optional
 
 # Optional Prometheus integration — graceful degradation if not installed.
 # Install: pip install prometheus-client
 try:
+    from fastapi.responses import Response as _FastAPIResponse
     from prometheus_client import (
-        Counter as _PCounter,
-        Histogram as _PHistogram,
-        generate_latest as _prom_generate_latest,
         CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE,
     )
-    from fastapi.responses import Response as _FastAPIResponse
+    from prometheus_client import (
+        Counter as _PCounter,
+    )
+    from prometheus_client import (
+        Histogram as _PHistogram,
+    )
+    from prometheus_client import (
+        generate_latest as _prom_generate_latest,
+    )
 
     _PROM_AVAILABLE = True
     _prom_prediction_counter = _PCounter(
@@ -105,7 +82,6 @@ router = APIRouter()
 # by main.py.  Previously root() used a hardcoded literal "1.2.0" that was
 # decoupled from main._API_VERSION; a version bump required two manual edits.
 # main.py now imports _API_VERSION from here instead of defining its own copy.
-# Fix M-01.
 _API_VERSION: str = "1.2.0"
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -115,7 +91,7 @@ _API_KEY: str | None = os.getenv("API_KEY")
 _METRICS_TOKEN: str | None = os.getenv("METRICS_TOKEN")
 _security = HTTPBearer(auto_error=False)
 
-# FIX F-09: Strict auth mode — when STRICT_AUTH=true, an unset API_KEY blocks
+# Strict auth mode — when STRICT_AUTH=true, an unset API_KEY blocks
 # all requests rather than allowing them through (fail-secure over fail-open).
 # Default false preserves backward-compatible dev behaviour.
 # Set STRICT_AUTH=true in any internet-facing deployment.
@@ -124,6 +100,7 @@ if not _API_KEY and not _STRICT_AUTH:
     # NOTE: not using logger here — logging may not be configured at import time.
     # main.py lifespan logs this during startup.
     import warnings as _warnings
+
     _warnings.warn(
         "API_KEY env var is not set — all prediction endpoints are publicly accessible. "
         "Set API_KEY and STRICT_AUTH=true for production deployments.",
@@ -202,9 +179,7 @@ class MetricsCollector:
 
         # Emit Prometheus counters/histogram outside the lock (thread-safe internally)
         if _PROM_AVAILABLE:
-            _prom_prediction_counter.labels(
-                status="success" if success else "error"
-            ).inc()
+            _prom_prediction_counter.labels(status="success" if success else "error").inc()
             _prom_prediction_latency.observe(elapsed_s)
 
     def record_rejection(self) -> None:
@@ -217,11 +192,7 @@ class MetricsCollector:
     def snapshot(self) -> dict:
         with self._lock:
             now = time.time()
-            uptime = (
-                (now - self._startup_time)
-                if self._startup_time != float("inf")
-                else 0.0
-            )
+            uptime = (now - self._startup_time) if self._startup_time != float("inf") else 0.0
             total = self._prediction_count
             errors = self._error_count
             rejected = self._rejected_count
@@ -230,9 +201,9 @@ class MetricsCollector:
         if latencies:
             arr = np.array(latencies)
             mean_ms = float(np.mean(arr))
-            p50_ms  = float(np.percentile(arr, 50))   # linear interpolation — no rounding bias
-            p95_ms  = float(np.percentile(arr, 95))   # correct for small n; was max for n<=20
-            p99_ms  = float(np.percentile(arr, 99))   # correct for small n; was max for n<=100
+            p50_ms = float(np.percentile(arr, 50))  # linear interpolation — no rounding bias
+            p95_ms = float(np.percentile(arr, 95))  # correct for small n; was max for n<=20
+            p99_ms = float(np.percentile(arr, 99))  # correct for small n; was max for n<=100
         else:
             mean_ms = p50_ms = p95_ms = p99_ms = 0.0
 
@@ -270,30 +241,26 @@ def _compute_ci(
     input_df: pd.DataFrame,
     prediction_id: str,
     input_hash: str,
-) -> tuple[Optional[float], Optional[float], Optional[float], Optional[str], Optional[dict]]:
+) -> tuple[float | None, float | None, float | None, str | None, dict | None]:
     """
     Best-effort CI from predict_with_intervals(). All None on any failure.
     Failure never causes a 500 — point estimate is always returned.
 
-    FIX H9: lower_bound key is always singular — the dead "lower_bounds"
+    lower_bound key is always singular — the dead "lower_bounds"
     plural fallback never existed and has been removed.
 
-    FIX C5+H7: Returns the full ci_result dict as 5th element so predict_single
+    Returns the full ci_result dict as 5th element so predict_single
     can pass it as _precomputed_ml_result to HybridPredictor, eliminating the
     redundant second PredictionPipeline.predict() call (was causing 2× latency).
     """
     try:
-        ci_result = pipeline.predict_with_intervals(
-            input_df, confidence_level=_CI_CONFIDENCE_LEVEL
-        )
+        ci_result = pipeline.predict_with_intervals(input_df, confidence_level=_CI_CONFIDENCE_LEVEL)
         ci = ci_result.get("confidence_intervals")
         if ci is None:
-            logger.warning(
-                f"CI id={prediction_id} hash={input_hash}: no confidence_intervals key"
-            )
+            logger.warning(f"CI id={prediction_id} hash={input_hash}: no confidence_intervals key")
             return None, None, None, None, None
 
-        # FIX H9: key is "lower_bound" (singular list) — "lower_bounds" never exists.
+        # key is "lower_bound" (singular list) — "lower_bounds" never exists.
         lower_raw = ci.get("lower_bound")
         upper_raw = ci.get("upper_bound")
         if lower_raw is None or upper_raw is None:
@@ -303,12 +270,8 @@ def _compute_ci(
             )
             return None, None, None, None, None
 
-        lower = float(
-            lower_raw[0] if isinstance(lower_raw, (list, tuple)) else lower_raw
-        )
-        upper = float(
-            upper_raw[0] if isinstance(upper_raw, (list, tuple)) else upper_raw
-        )
+        lower = float(lower_raw[0] if isinstance(lower_raw, list | tuple) else lower_raw)
+        upper = float(upper_raw[0] if isinstance(upper_raw, list | tuple) else upper_raw)
         level = float(ci.get("confidence_level", _CI_CONFIDENCE_LEVEL))
         method = str(ci.get("method", "unknown"))
         return lower, upper, level, method, ci_result
@@ -330,7 +293,7 @@ def verify_api_key(
 ) -> None:
     """Bearer-token auth guard.
 
-    FIX F-09 / U-09: Fail-secure behaviour and differentiated 401 responses.
+    - Fail-secure behaviour and differentiated 401 responses.
     - When STRICT_AUTH=true: unset API_KEY blocks all requests (fail-secure).
     - When STRICT_AUTH=false (default): unset API_KEY allows all requests (dev mode).
     - Missing Authorization header vs wrong token produce distinct detail strings
@@ -339,7 +302,7 @@ def verify_api_key(
     """
     if not _API_KEY:
         if _STRICT_AUTH:
-            # FIX F-09: was logger.error — fired on EVERY request at 100+ req/s,
+            # was logger.error — fired on EVERY request at 100+ req/s,
             # flooding logs and masking genuine errors.  Downgraded to logger.warning.
             # This condition is a misconfiguration detectable at startup; log it ONCE
             # there (in main.py / lifespan) rather than per-request.
@@ -373,7 +336,7 @@ def verify_metrics_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
 ) -> None:
     """Bearer-token auth guard for /metrics. No-op when METRICS_TOKEN is unset.
-    FIX U-09: Missing header vs wrong token produce distinct log/detail strings.
+    Missing header vs wrong token produce distinct log/detail strings.
     """
     if not _METRICS_TOKEN:
         return
@@ -397,9 +360,7 @@ def get_predictor(request: Request):
     """Returns the cached HybridPredictor from app state. Raises 503 if absent."""
     predictor = getattr(request.app.state, "predictor", None)
     if predictor is None:
-        startup_error = getattr(
-            request.app.state, "startup_error", "Model not initialised"
-        )
+        startup_error = getattr(request.app.state, "startup_error", "Model not initialised")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Prediction service unavailable: {startup_error}",
@@ -442,9 +403,7 @@ async def prometheus_metrics(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="prometheus-client not installed. pip install prometheus-client",
         )
-    return _FastAPIResponse(
-        content=_prom_generate_latest(), media_type=_PROM_CONTENT_TYPE
-    )
+    return _FastAPIResponse(content=_prom_generate_latest(), media_type=_PROM_CONTENT_TYPE)
 
 
 # =============================================================================
@@ -502,10 +461,8 @@ async def health_check(request: Request):
     predictor = getattr(request.app.state, "predictor", None)
 
     if pipeline is None or predictor is None:
-        startup_error = getattr(
-            request.app.state, "startup_error", "Service failed to start"
-        )
-        # FIX F-01: return HTTP 503, not 200, when the model is not loaded.
+        startup_error = getattr(request.app.state, "startup_error", "Service failed to start")
+        # return HTTP 503, not 200, when the model is not loaded.
         # Previously both healthy and unhealthy branches returned HTTP 200 (the
         # FastAPI default for a normal `return`). Docker Compose healthcheck uses
         # `curl -sf` where -f fails on 4xx/5xx — a 200 with body status=unhealthy
@@ -608,12 +565,12 @@ def predict_single(
     I-01: sync def — FastAPI runs in threadpool, preserving event-loop concurrency.
     #7:   Semaphore caps concurrent calls. Returns 429 when at capacity.
 
-    FIX H7: Single inference path.
+    Single inference path.
       predict_with_intervals() is called first to obtain both the ML-only prediction
       and the CI in one pass. The result dict is passed into HybridPredictor via
       _precomputed_ml_result so the ML pipeline is not called a second time.
 
-    FIX C5: CI centred on the hybrid prediction, not the ML-only prediction.
+    CI centred on the hybrid prediction, not the ML-only prediction.
       CI bounds are scaled by (hybrid_pred / ml_pred) after blending, so the
       reported interval always brackets the returned hybrid point estimate —
       even for policies in the actuarial-dominant / transition zone.
@@ -626,15 +583,14 @@ def predict_single(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
-                f"Server busy: {_MAX_CONCURRENT} predictions already running. "
-                "Retry in a moment."
+                f"Server busy: {_MAX_CONCURRENT} predictions already running. " "Retry in a moment."
             ),
         )
 
     prediction_id = str(uuid.uuid4())
     input_data = body.model_dump()
     input_hash = _hash_input(input_data)
-    # H-01 FIX: t_start and input_df are now INSIDE the try block so the
+    # t_start and input_df are now INSIDE the try block so the
     # semaphore is always released by finally even if pd.DataFrame() or
     # time.perf_counter() raise unexpectedly.  The 6-line gap between
     # acquire() and try: has been closed.
@@ -643,7 +599,7 @@ def predict_single(
 
     try:
         input_df = pd.DataFrame([input_data])
-        # ── 1. ML prediction + CI in a single inference pass (FIX H7) ─────────
+        # ── 1. ML prediction + CI in a single inference pass ─────────
         # predict_with_intervals() calls predict() internally and returns the
         # full result dict extended with confidence_intervals.  We reuse this
         # pre-computed ML result when calling HybridPredictor below.
@@ -676,7 +632,9 @@ def predict_single(
         t_point = time.perf_counter()
 
         # ── Guard: non-finite output before Pydantic serialization ────────────
-        if not _math.isfinite(prediction):  # M-05: uses module-level _math (was redundant inner import)
+        if not _math.isfinite(
+            prediction
+        ):  # M-05: uses module-level _math (was redundant inner import)
             raise ValueError(
                 f"Model returned non-finite prediction ({prediction!r}) for "
                 f"input_hash={input_hash}. "
@@ -684,13 +642,13 @@ def predict_single(
                 "Verify model artifact integrity and input feature range."
             )
 
-        # ── 3. Re-centre CI on the hybrid prediction (FIX C5) ─────────────────
+        # ── 3. Re-centre CI on the hybrid prediction ─────────────────
         # The CI from predict_with_intervals() is centred on the ML-only
         # prediction.  When the actuarial blend shifts the final prediction
         # (transition / actuarial-dominant policies), the CI must be shifted
         # by the same ratio so that [lower_bound, upper_bound] brackets the
         # reported hybrid prediction value.
-        if lower_bound is not None and ml_ci_result is not None:
+        if lower_bound is not None and upper_bound is not None and ml_ci_result is not None:
             ml_pred_raw = ml_ci_result.get("predictions", [None])[0]
             if ml_pred_raw is not None:
                 ml_pred_float = float(ml_pred_raw)
@@ -708,29 +666,25 @@ def predict_single(
         elapsed = time.perf_counter() - t_start
         success = True
 
-        # FIX F-11: compute CI width as fraction of prediction — machine-readable.
+        # compute CI width as fraction of prediction — machine-readable.
         # config.yaml notes "CI mean width $11,859 = 92% of mean premium — must be
         # disclosed to downstream consumers."  Callers can now gate on ci_width_pct
         # without computing (upper - lower) / prediction themselves.
-        ci_width_pct: Optional[float] = None
+        ci_width_pct: float | None = None
         if lower_bound is not None and upper_bound is not None and prediction > 1e-8:
             ci_width_pct = round((upper_bound - lower_bound) / prediction * 100.0, 2)
 
-        # P2-D FIX: set ci_unreliable flag when width exceeds actionable threshold.
+        # set ci_unreliable flag when width exceeds actionable threshold.
         # 80% chosen conservatively — the logged problem case was 118.8%.
         _CI_UNRELIABLE_THRESHOLD = 80.0
-        ci_unreliable: Optional[bool] = (
-            (ci_width_pct > _CI_UNRELIABLE_THRESHOLD)
-            if ci_width_pct is not None
-            else None
+        ci_unreliable: bool | None = (
+            (ci_width_pct > _CI_UNRELIABLE_THRESHOLD) if ci_width_pct is not None else None
         )
 
-        # P3-B FIX: forward actuarial/ML ratio from HybridPredictor result so
+        # forward actuarial/ML ratio from HybridPredictor result so
         # downstream systems can gate on high-disagreement predictions without
         # parsing server logs.
-        actuarial_ml_ratio: Optional[float] = (
-            hybrid_result.get("actuarial_conservativeness_ratio")
-        )
+        actuarial_ml_ratio: float | None = hybrid_result.get("actuarial_conservativeness_ratio")
 
         ci_str = (
             f"lower=${lower_bound:,.0f} upper=${upper_bound:,.0f} "
@@ -765,7 +719,7 @@ def predict_single(
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        )
+        ) from exc
 
     except Exception as exc:
         elapsed = time.perf_counter() - t_start
@@ -777,7 +731,7 @@ def predict_single(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction failed. Check server logs for details.",
-        )
+        ) from exc
 
     finally:
         _predict_semaphore.release()
@@ -833,8 +787,7 @@ def predict_batch(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
-                f"Server busy: {_MAX_CONCURRENT} predictions already running. "
-                "Retry in a moment."
+                f"Server busy: {_MAX_CONCURRENT} predictions already running. " "Retry in a moment."
             ),
         )
 
@@ -872,7 +825,7 @@ def predict_batch(
             failed=0,
             model_used=model_used,
             ci_available=False,
-            # FIX F-10: expose machine-readable reason so consumers know why CI is absent.
+            # expose machine-readable reason so consumers know why CI is absent.
             ci_unavailable_reason=(
                 "Batch endpoint does not compute confidence intervals — "
                 "predict_with_intervals() is O(N)×120ms. Use POST /api/v1/predict "
@@ -886,7 +839,7 @@ def predict_batch(
             f"falling back to per-record (max {_FALLBACK_ROW_CAP} rows)"
         )
 
-        # H-02 FIX: Reject batches that exceed the per-record fallback cap.
+        # Reject batches that exceed the per-record fallback cap.
         # Without this guard a 10K-row batch whose vectorised path fails holds
         # the semaphore slot for ~11 hours and writes ≥10K log lines.
         # Callers should retry with a smaller batch or investigate the
@@ -906,17 +859,14 @@ def predict_batch(
                     f"({_FALLBACK_ROW_CAP}). Retry with a smaller batch or "
                     f"contact support. Original error: {vec_exc!r}"
                 ),
-            )
+            ) from vec_exc
         batch_results = [
-            _predict_single_row(predictor, row, i)
-            for i, row in enumerate(records_dicts)
+            _predict_single_row(predictor, row, i) for i, row in enumerate(records_dicts)
         ]
         successful = [r for r in batch_results if r.status == "success"]
         failed_records = [r for r in batch_results if r.status == "error"]
         model_used = (
-            successful[0].model_used
-            if successful and successful[0].model_used
-            else "unknown"
+            successful[0].model_used if successful and successful[0].model_used else "unknown"
         )
 
         elapsed = time.perf_counter() - t_start
@@ -927,9 +877,7 @@ def predict_batch(
             f"path=per-record-fallback elapsed={elapsed:.3f}s"
         )
         if failed_records:
-            logger.warning(
-                f"batch id={batch_id} first error: {failed_records[0].error}"
-            )
+            logger.warning(f"batch id={batch_id} first error: {failed_records[0].error}")
 
         return BatchPredictResponse(
             results=batch_results,
@@ -991,4 +939,4 @@ async def model_info(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not retrieve model information.",
-        )
+        ) from exc

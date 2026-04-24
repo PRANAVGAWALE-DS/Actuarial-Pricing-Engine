@@ -1,7 +1,7 @@
 {
-  "version": "5.2.0-fix4",
+  "version": "5.2.0",
   "model_schema_version": "3.0",
-  "timestamp": "2026-04-18T19:20:51.676311",
+  "timestamp": "2026-04-25T01:37:42.639768",
   "platform": "Windows",
   "splits": {
     "train": 34908,
@@ -66,7 +66,7 @@
   "best_val_rmse": 3896.302387456419,
   "best_val_r2": 0.8962560573289232,
   "best_val_mae": 2607.9106305253854,
-  "training_timestamp": "2026-04-18T20:11:09.493474",
+  "training_timestamp": "2026-04-25T02:31:12.483305",
   "trained_models": [
     "xgboost_median",
     "xgboost",
@@ -74,11 +74,11 @@
     "lightgbm",
     "random_forest"
   ],
-  "pipeline_version": "5.2.0-fix4",
-  "mlflow_run_id": "dc9008f5da1b42ff8750928310ccd7be",
+  "pipeline_version": "5.2.0",
+  "mlflow_run_id": "b7383914fb404846b5a295bc71397a33",
   "bias_correction_thresholds": {
     "q50_threshold_low": 10000.0,
     "q75_threshold_high": 14000.0,
-    "run_timestamp": "2026-04-18T20:11:09.493474"
+    "run_timestamp": "2026-04-25T02:31:12.483305"
   }
 }

@@ -71,7 +71,7 @@ services:
   # ───────────────────────────────────────────────────────────────────────────
   # MLflow Tracking Server
   #
-  # FIX [D1-P1]: Replaced image: python:3.11-slim + inline pip install with a
+  # Replaced image: python:3.11-slim + inline pip install with a
   # pre-built image via docker/mlflow.Dockerfile. The old approach ran
   # pip install mlflow==3.4.0 on every container start (~25-40s), blocked
   # dependent services, and could fail silently on PyPI outages.
@@ -88,7 +88,7 @@ services:
       dockerfile: docker/Dockerfile
       target: mlflow
     container_name: insurance-mlflow
-    # H2 FIX: enable MLflow built-in basic-auth plugin.
+    # enable MLflow built-in basic-auth plugin.
     # The Dockerfile CMD is overridden here so the image remains unchanged.
     # Requires docker/mlflow_basic_auth.ini (copy from .example and set creds).
     command: >
@@ -123,7 +123,7 @@ services:
   # ───────────────────────────────────────────────────────────────────────────
   # Optuna Dashboard
   #
-  # FIX [D1-P1 + D2-P2]: Replaced image: python:3.11-slim + inline pip install
+  # Replaced image: python:3.11-slim + inline pip install
   # with a pre-built image via docker/optuna.Dockerfile. Two fixes bundled:
   #   1. pip-on-start eliminated (same rationale as mlflow above).
   #   2. optuna-dashboard version corrected from 0.17.0 → 0.20.0 to match
@@ -143,7 +143,7 @@ services:
       - "8088:8080"
     volumes:
       - ../models:/app/models     # optuna_studies.db lives here
-      # L2 FIX: removed dead ../studies mount. The dashboard CMD points to
+      # removed dead ../studies mount. The dashboard CMD points to
       # sqlite:////app/models/optuna_studies.db — the studies/ path is never
       # read. Add it back here only if you relocate the DB.
     healthcheck:
@@ -205,13 +205,13 @@ services:
       MODEL_PATH: "models/"
       # Point to the MLflow server container (not file-based ./mlruns)
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
-      # H2 FIX: credentials for MLflow basic-auth.  Set in .env.docker.
+      # credentials for MLflow basic-auth.  Set in .env.docker.
       MLFLOW_TRACKING_USERNAME: "${MLFLOW_ADMIN_USERNAME}"
       MLFLOW_TRACKING_PASSWORD: "${MLFLOW_ADMIN_PASSWORD}"
       # Consistent Optuna path matching actual file location
       OPTUNA_STORAGE: "sqlite:///models/optuna_studies.db"
       LOG_FILE: "logs/api.log"
-      # FIX [D3-P1]: STRICT_AUTH=true enforces fail-secure auth mode.
+      # STRICT_AUTH=true enforces fail-secure auth mode.
       # When set, an unset or incorrect API_KEY returns HTTP 503 rather than
       # allowing unauthenticated access. API_KEY must be set in .env.docker.
       STRICT_AUTH: "true"
@@ -240,7 +240,7 @@ services:
   # Startup order: waits for api to pass /health before booting, so the
   # "API unavailable" banner never appears on first page load.
   #
-  # FIX [D3-P1]: --server.enableXsrfProtection=false removed. This flag
+  # --server.enableXsrfProtection=false removed. This flag
   # disabled Streamlit's built-in XSRF token validation on form submissions,
   # allowing any page that can reach localhost:8501 to submit forms on behalf
   # of authenticated users. XSRF protection is enabled by default in Streamlit

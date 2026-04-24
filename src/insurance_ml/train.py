@@ -19,7 +19,7 @@ import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import joblib
 import matplotlib.pyplot as plt
@@ -31,15 +31,13 @@ from sklearn.model_selection import KFold, train_test_split
 
 from insurance_ml.utils import MetricsExtractor, ValidationError
 
-warnings.filterwarnings(
-    "ignore", message=".*Falling back to prediction using DMatrix.*"
-)
+warnings.filterwarnings("ignore", message=".*Falling back to prediction using DMatrix.*")
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-VERSION = "5.2.0-fix4"
+VERSION = "5.2.0"
 MODEL_SCHEMA_VERSION = "3.0"
 
 # Centralized psutil detection
@@ -93,9 +91,7 @@ class BiasCorrection:
 
         if not self.is_2tier:
             if self.var_mid == 0 or not _m.isfinite(self.var_mid):
-                raise ValueError(
-                    f"var_mid must be non-zero and finite, got {self.var_mid}"
-                )
+                raise ValueError(f"var_mid must be non-zero and finite, got {self.var_mid}")
 
         if self.threshold_low is None:
             raise ValueError("threshold_low is required")
@@ -126,16 +122,14 @@ class BiasCorrection:
             log_details: Emit per-tier diagnostics when True.
 
         Notes:
-            ML-02 FIX: y_original is now Optional.  Callers MUST NOT pass y_pred as
+            y_original is now Optional.  Callers MUST NOT pass y_pred as
             both arguments as a workaround — simply omit y_original at inference.
         """
-        # ML-02 FIX: route using y_pred when y_original not available (inference path).
+        # route using y_pred when y_original not available (inference path).
         routing = y_original if y_original is not None else y_pred
 
         if len(y_pred) != len(routing):
-            raise ValueError(
-                f"Length mismatch: y_pred={len(y_pred)}, y_original={len(routing)}"
-            )
+            raise ValueError(f"Length mismatch: y_pred={len(y_pred)}, y_original={len(routing)}")
 
         y_corrected = y_pred.copy()
 
@@ -161,6 +155,7 @@ class BiasCorrection:
             high_mask = routing > self.threshold_high
 
             correction_low = np.exp(self.var_low / 2)
+            assert self.var_mid is not None, "var_mid must be set for 3-tier correction"
             correction_mid = np.exp(self.var_mid / 2)
             correction_high = np.exp(self.var_high / 2)
 
@@ -184,7 +179,7 @@ class BiasCorrection:
             "var_low": float(self.var_low),
             "var_mid": float(self.var_mid) if self.var_mid is not None else None,
             "var_high": float(self.var_high),
-            # BUG-C FIX: use 'is not None' not truthiness.
+            # use 'is not None' not truthiness.
             # A threshold of 0.0 is technically valid; a truthiness check would
             # silently serialise it as None, corrupting the round-trip.
             "threshold_low": (
@@ -194,9 +189,7 @@ class BiasCorrection:
                 float(self.threshold_high) if self.threshold_high is not None else None
             ),
             "overall_variance": (
-                float(self.overall_variance)
-                if self.overall_variance is not None
-                else None
+                float(self.overall_variance) if self.overall_variance is not None else None
             ),
             "is_2tier": self.is_2tier,
             "version": "1.0",
@@ -226,7 +219,7 @@ class BiasCorrection:
                 f"{self.threshold_low:.4f}_{self.threshold_high:.4f}"
             )
 
-        return hashlib.md5(state_str.encode()).hexdigest()[:8]
+        return hashlib.md5(state_str.encode(), usedforsecurity=False).hexdigest()[:8]
 
     def __repr__(self) -> str:
         tier_type = "2-tier" if self.is_2tier else "3-tier"
@@ -234,10 +227,7 @@ class BiasCorrection:
 
         f_low = _m.exp(self.var_low / 2)
         f_high = _m.exp(self.var_high / 2)
-        return (
-            f"BiasCorrection({tier_type}, "
-            f"factor_low={f_low:.4f}, factor_high={f_high:.4f})"
-        )
+        return f"BiasCorrection({tier_type}, " f"factor_low={f_low:.4f}, factor_high={f_high:.4f})"
 
     @classmethod
     def calculate_from_model(
@@ -357,7 +347,7 @@ class BiasCorrection:
                 _model_type == "GradientBoostingRegressor"
                 and getattr(model, "loss", "") == "quantile"
             )
-            # FIX-1 (v7.4.4): elastic_net factory is QuantileRegressor, not ElasticNet.
+            # elastic_net factory is QuantileRegressor, not ElasticNet.
             # sklearn.linear_model.QuantileRegressor has no 'loss' attribute and does
             # not set '_is_quantile_model', so none of the other checks catch it.
             # model_name='elastic_net' also lacks 'quantile', making the fallback miss it.
@@ -366,7 +356,7 @@ class BiasCorrection:
             or getattr(model, "_is_quantile_model", False)
             # model_name fallback (e.g. "lightgbm_quantile", "lgbm_q65")
             or "quantile" in model_name.lower()
-            # FIX-XGB-2X: In XGBoost 2.x, get_xgb_params() / get_params() do not
+            # In XGBoost 2.x, get_xgb_params() / get_params() do not
             # reliably expose 'reg:quantileerror' or 'quantile_alpha' — the objective
             # may be stored as an internal callable or under a different key depending
             # on the exact 2.x build.  Direct attribute access bypasses all of that:
@@ -407,9 +397,7 @@ class BiasCorrection:
         try:
             # ── Predict in transformed space ──────────────────────────────────
             y_pred_val_transformed = model.predict(X_val)
-            y_val_transformed = (
-                y_val.values if hasattr(y_val, "values") else np.array(y_val)
-            )
+            y_val_transformed = y_val.values if hasattr(y_val, "values") else np.array(y_val)
 
             # ── Residuals in transformed space (always needed for fallback/log) ──
             residuals = y_val_transformed - y_pred_val_transformed
@@ -430,7 +418,7 @@ class BiasCorrection:
             )
 
             # ── Define 3 tiers on original scale ─────────────────────────────
-            # v7.5.5 FIX (PATCH-A): Use fixed G6-aligned absolute boundaries
+            # Use fixed G6-aligned absolute boundaries
             # instead of floating prediction-percentile boundaries.
             #
             # ROOT CAUSE OF THE REGRESSION:
@@ -446,7 +434,6 @@ class BiasCorrection:
             #   that are already under-predicted — inverting those predictions
             #   and driving R² to -8 and -139 for those G6 segments.
             #
-            # FIX:
             #   Use the same fixed absolute boundaries as segment_r2_breakdown:
             #     threshold_low  = $10,000  (G6 Low/Mid boundary)
             #     threshold_high = $14,000  (G6 Mid/High boundary)
@@ -458,7 +445,7 @@ class BiasCorrection:
             # Note: q50/q75 variable names are kept below for backward compat
             # with the 2-tier fallback and downstream log formatting only.
             # They are now constants, not percentiles.
-            _BC_TIER_LOW: float = 10_000.0   # matches G6 Low/Mid boundary
+            _BC_TIER_LOW: float = 10_000.0  # matches G6 Low/Mid boundary
             _BC_TIER_HIGH: float = 14_000.0  # matches G6 Mid/High boundary
             q50 = _BC_TIER_LOW
             q75 = _BC_TIER_HIGH
@@ -479,10 +466,7 @@ class BiasCorrection:
                     _params = _prev.get("correction_params") or _prev
                     _prev_q50 = float(_params.get("threshold_low", 0) or 0)
                     _prev_q75 = float(_params.get("threshold_high", 0) or 0)
-                    if (
-                        abs(_prev_q50 - _BC_TIER_LOW) > 1.0
-                        or abs(_prev_q75 - _BC_TIER_HIGH) > 1.0
-                    ):
+                    if abs(_prev_q50 - _BC_TIER_LOW) > 1.0 or abs(_prev_q75 - _BC_TIER_HIGH) > 1.0:
                         logger.warning(
                             f"⚠️  BiasCorrection boundary migration detected:\n"
                             f"   Previous (percentile-based): "
@@ -523,13 +507,13 @@ class BiasCorrection:
                 v7.5.5 PATCH-B: direction-aware guard added.
                 v7.5.5 PATCH-D: y_true-filtered ratio computation added.
 
-                PATCH-D — BC ratio dilution fix:
+                PATCH-D — BC ratio dilution:
                 The BC 'Low' tier (pred < $10K) contains two sub-populations:
                   ① True-cheap (y_true ≤ $10K): over-predicted → y_true/y_pred < 1
                   ② True-expensive (y_true > $10K), prediction collapsed below $10K:
                      under-predicted → y_true/y_pred >> 1
                 Sub-pop ② drags the aggregate median ratio upward, giving a weaker
-                downward correction than sub-pop ① needs. Fix: restrict the ratio
+                downward correction than sub-pop ① needs. restrict the ratio
                 computation to samples where y_true is within the tier's intended
                 boundary. Falls back to unfiltered if < 30 matching samples.
                 """
@@ -543,9 +527,7 @@ class BiasCorrection:
                     # yeo-johnson path: distribution-agnostic median ratio.
 
                     # ── DIRECTION GUARD (v7.5.5 PATCH-B) ─────────────────────
-                    _tier_overpricing = float(
-                        (y_pred_original[mask] > y_val_original[mask]).mean()
-                    )
+                    _tier_overpricing = float((y_pred_original[mask] > y_val_original[mask]).mean())
                     _n_tier = int(mask.sum())
 
                     if _tier_overpricing < 0.45:
@@ -627,11 +609,9 @@ class BiasCorrection:
                     return float(np.var(residuals, ddof=1))
                 else:
                     eps = 1e-8
-                    ratio = float(
-                        np.median(y_val_original / np.maximum(y_pred_original, eps))
-                    )
+                    ratio = float(np.median(y_val_original / np.maximum(y_pred_original, eps)))
                     ratio = min(ratio, _MAX_RATIO)
-                    # BUG-F FIX: mirror _tier_var — handle downward corrections
+                    # mirror _tier_var — handle downward corrections
                     # (ratio < 1.0 → var = 2*log(ratio) < 0) instead of silently
                     # falling back to _MIN_VAR, which would discard the correction.
                     if ratio > 0:
@@ -644,27 +624,23 @@ class BiasCorrection:
                     f"⚠️  Small segment detected (falling back to 2-tier):\n"
                     f"   Low: {n_low} samples, Mid: {n_mid} samples, High: {n_high} samples"
                 )
-                # FIX ISSUE-4A: fallback also uses y_pred_original so that
+                # fallback also uses y_pred_original so that
                 # threshold_low (q75) stored in the object matches inference routing.
                 low_mask_2tier = y_pred_original <= q75
                 high_mask_2tier = y_pred_original > q75
 
-                var_low = _tier_var(low_mask_2tier, tier_name="Low-Mid",
-                                    ytrue_upper=float(q75))
-                var_high = _tier_var(high_mask_2tier, tier_name="High",
-                                     ytrue_lower=float(q75))
+                var_low = _tier_var(low_mask_2tier, tier_name="Low-Mid", ytrue_upper=float(q75))
+                var_high = _tier_var(high_mask_2tier, tier_name="High", ytrue_lower=float(q75))
                 overall_var = _overall_var()
 
-                # ── FIX: Cap downward bias correction at −10% per tier ────────
+                # ── Cap downward bias correction at −10% per tier ────────
                 # var < 0 encodes a downward correction (exp(var/2) < 1.0).
                 # var_low=-0.347 → factor=0.84 (−16%) is too aggressive on
                 # calibration data with high kurtosis — it overcorrects on test.
                 # Cap: exp(-MAX_DOWNWARD_VAR/2) = 0.90 (max −10% downward).
                 # Upward corrections (var > 0) are unrestricted.
                 var_low = max(var_low, -_MAX_DOWNWARD_VAR) if var_low < 0 else var_low
-                var_high = (
-                    max(var_high, -_MAX_DOWNWARD_VAR) if var_high < 0 else var_high
-                )
+                var_high = max(var_high, -_MAX_DOWNWARD_VAR) if var_high < 0 else var_high
 
                 bias_correction = cls(
                     var_low=var_low,
@@ -678,15 +654,14 @@ class BiasCorrection:
                 return bias_correction
 
             # ── 3-tier ────────────────────────────────────────────────────────
-            var_low = _tier_var(low_mask, tier_name="Low",
-                                ytrue_upper=float(q50))
-            var_mid = _tier_var(mid_mask, tier_name="Mid",
-                                ytrue_lower=float(q50), ytrue_upper=float(q75))
-            var_high = _tier_var(high_mask, tier_name="High",
-                                 ytrue_lower=float(q75))
+            var_low = _tier_var(low_mask, tier_name="Low", ytrue_upper=float(q50))
+            var_mid = _tier_var(
+                mid_mask, tier_name="Mid", ytrue_lower=float(q50), ytrue_upper=float(q75)
+            )
+            var_high = _tier_var(high_mask, tier_name="High", ytrue_lower=float(q75))
             overall_var = _overall_var()
 
-            # ── FIX: Cap downward bias correction at −10% per tier ────────────
+            # ── Cap downward bias correction at −10% per tier ────────────
             # Rationale: var_low=-0.347 (factor=0.84, −16%) was computed on the
             # calibration split (60% of val) but overcorrects on the test set
             # because the heavy-tailed residuals (skew=+3.14, kurtosis=12.58)
@@ -764,7 +739,7 @@ def calculate_sample_weights(
         near-uniform weights because the dollar-magnitude ordering is compressed,
         defeating the importance-weighting objective.
     """
-    # ML-01 FIX: Use y_original for weight quantile computation when available.
+    # Use y_original for weight quantile computation when available.
     # The fragile y_range < 20 heuristic is removed; callers now explicitly pass
     # y_original so we always weight on the correct scale.
     if y_original is not None:
@@ -840,7 +815,7 @@ def calculate_sample_weights(
     method = sw_cfg["method"]
     tiers = sw_cfg["tiers"]
 
-    # ML-01 FIX: Removed fragile y_range < 20 heuristic.
+    # Removed fragile y_range < 20 heuristic.
     # scale_label is now set deterministically at function entry based on
     # whether y_original was provided.
     logger.info(f"Calculating sample weights: method='{method}' ({scale_label})")
@@ -849,9 +824,7 @@ def calculate_sample_weights(
     # QUANTILE CALCULATION with error handling
     # ========================================
     try:
-        q25, q50, q75, q90, q95, q99 = y_for_weights.quantile(
-            [0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
-        )
+        q25, q50, q75, q90, q95, q99 = y_for_weights.quantile([0.25, 0.50, 0.75, 0.90, 0.95, 0.99])
 
         logger.debug(
             f"Target quantiles:\n"
@@ -872,9 +845,7 @@ def calculate_sample_weights(
     # VALIDATION: Check quantiles are distinct
     # ========================================
     quantiles = [q25, q50, q75, q90, q95, q99]
-    unique_quantiles = len(
-        set(np.round(quantiles, 2))
-    )  # Round to avoid floating point issues
+    unique_quantiles = len(set(np.round(quantiles, 2)))  # Round to avoid floating point issues
 
     if unique_quantiles < 3:
         logger.warning(
@@ -973,9 +944,7 @@ def calculate_sample_weights(
     return weights
 
 
-def validate_sample_weights(
-    weights: np.ndarray, y: pd.Series, max_ratio: float = 100.0
-) -> bool:
+def validate_sample_weights(weights: np.ndarray, y: pd.Series, max_ratio: float = 100.0) -> bool:
     """
     Validate sample weights are reasonable.
 
@@ -990,9 +959,7 @@ def validate_sample_weights(
 
     # Check 1: Length match
     if len(weights) != len(y):
-        logger.error(
-            f"❌ Weight length mismatch: {len(weights)} weights for {len(y)} samples"
-        )
+        logger.error(f"❌ Weight length mismatch: {len(weights)} weights for {len(y)} samples")
         return False
 
     # Check 2: Finite values
@@ -1011,9 +978,7 @@ def validate_sample_weights(
     if weights.min() > 0:
         weight_ratio = weights.max() / weights.min()
         if weight_ratio > max_ratio:
-            logger.warning(
-                f"⚠️  Extreme weight ratio: {weight_ratio:.1f}x > {max_ratio}x threshold"
-            )
+            logger.warning(f"⚠️  Extreme weight ratio: {weight_ratio:.1f}x > {max_ratio}x threshold")
             return False
 
     # Check 5: Not all zeros
@@ -1070,17 +1035,13 @@ def analyze_high_value_segment(
     high_rmse = np.sqrt(mean_squared_error(y_high_true, y_high_pred))
     high_mae = mean_absolute_error(y_high_true, y_high_pred)
     high_r2 = r2_score(y_high_true, y_high_pred)
-    high_mape = 100 * np.mean(
-        np.abs((y_high_true - y_high_pred) / np.maximum(y_high_true, 1e-10))
-    )
+    high_mape = 100 * np.mean(np.abs((y_high_true - y_high_pred) / np.maximum(y_high_true, 1e-10)))
 
     n_samples = high_value_mask.sum()
     pct_samples = 100 * n_samples / len(y_true)
 
     logger.info("=" * 80)
-    logger.info(
-        f"HIGH-VALUE SEGMENT ANALYSIS (P{threshold_percentile}, >${threshold:.0f})"
-    )
+    logger.info(f"HIGH-VALUE SEGMENT ANALYSIS (P{threshold_percentile}, >${threshold:.0f})")
     logger.info("=" * 80)
     logger.info(f"Samples:      {n_samples}/{len(y_true)} ({pct_samples:.1f}%)")
     logger.info(f"Value range:  [${y_high_true.min():,.0f}, ${y_high_true.max():,.0f}]")
@@ -1148,6 +1109,7 @@ class TrainingResult(TypedDict, total=False):
     mlflow_run_id: str | None
     mlflow_model_uri: str | None
     model_version: str
+    explainability: dict[str, Any]
 
 
 # =====================================================================
@@ -1230,9 +1192,7 @@ class Config:
         assert (
             0.05 <= self.test_size <= 0.5
         ), f"test_size must be in [0.05, 0.5], got {self.test_size}"
-        assert (
-            0.1 <= self.val_size <= 0.5
-        ), f"val_size must be in [0.1, 0.5], got {self.val_size}"
+        assert 0.1 <= self.val_size <= 0.5, f"val_size must be in [0.1, 0.5], got {self.val_size}"
 
         # Calculate max memory
         if _PSUTIL_AVAILABLE:
@@ -1245,9 +1205,7 @@ class Config:
                 f"({self.memory_fraction*100:.0f}% of {total_ram_mb:.0f}MB)"
             )
         else:
-            logger.warning(
-                f"psutil unavailable, using config value: {self.max_memory_mb:.0f}MB"
-            )
+            logger.warning(f"psutil unavailable, using config value: {self.max_memory_mb:.0f}MB")
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> Config:
@@ -1372,11 +1330,11 @@ class TimeoutManager:
                 raise TimeoutError(f"Training timeout: {seconds}s exceeded")
 
             old_handler = signal.signal(signal.SIGALRM, handler)
-            signal.alarm(seconds)
+            signal.alarm(seconds)  # type: ignore[attr-defined]
             try:
                 yield self
             finally:
-                signal.alarm(0)
+                signal.alarm(0)  # type: ignore[attr-defined]
                 signal.signal(signal.SIGALRM, old_handler)
         else:
             # Windows: background thread sets _timed_out flag after `seconds`.
@@ -1437,7 +1395,7 @@ class ResourceMonitor:
         self.has_psutil = _PSUTIL_AVAILABLE
 
         # Smart GC tracking
-        self._last_gc_time = 0
+        self._last_gc_time: float = 0.0
         self._gc_cooldown = 5.0  # Min 5s between GC
         self._gc_count = 0
         self._gc_time_total = 0.0
@@ -1457,7 +1415,7 @@ class ResourceMonitor:
         if not self.has_psutil or self._process is None:
             return 0.0
         try:
-            return self._process.memory_info().rss / 1024**2
+            return float(self._process.memory_info().rss / 1024**2)
         except Exception:
             return 0.0
 
@@ -1522,8 +1480,7 @@ class ResourceMonitor:
         # Log significant collections only
         if freed_mb > 10 or gc_elapsed > 0.1:
             logger.debug(
-                f"Smart GC #{self._gc_count}: "
-                f"freed {freed_mb:.0f}MB in {gc_elapsed*1000:.0f}ms"
+                f"Smart GC #{self._gc_count}: " f"freed {freed_mb:.0f}MB in {gc_elapsed*1000:.0f}ms"
             )
 
         return after_mb < self.max_memory_mb
@@ -1647,9 +1604,7 @@ class FileSanitizer:
             return False
 
     @staticmethod
-    def safe_load(
-        path: Path, max_size_mb: float = 500.0, verify_checksum: bool = True
-    ) -> Any:
+    def safe_load(path: Path, max_size_mb: float = 500.0, verify_checksum: bool = True) -> Any:
         """Load model with validation"""
         if not path.exists():
             raise FileNotFoundError(f"Model not found: {path}")
@@ -1696,7 +1651,9 @@ class MLflowManager:
         self.enabled = enabled
         self.register_models = register_models
         self.lock = threading.RLock()
-        self._mlflow = None
+        import types as _mtypes
+
+        self._mlflow: _mtypes.ModuleType | None = None
         self._active_run_id = None
 
         if enabled:
@@ -1716,6 +1673,7 @@ class MLflowManager:
 
         try:
             with self.lock:
+                assert self._mlflow is not None
                 self._mlflow.set_tracking_uri(tracking_uri)
                 exp = self._mlflow.get_experiment_by_name(experiment)
                 if exp is None:
@@ -1743,6 +1701,7 @@ class MLflowManager:
 
         with self.lock:
             try:
+                assert self._mlflow is not None
                 # End any existing runs
                 while self._mlflow.active_run():
                     logger.warning("Force-ending orphaned MLflow run")
@@ -1764,7 +1723,7 @@ class MLflowManager:
             # Mark run as failed on exception
             with self.lock:
                 try:
-                    if self._mlflow.active_run():
+                    if self._mlflow is not None and self._mlflow.active_run():
                         self._mlflow.end_run(status="FAILED")
                 except Exception:
                     pass
@@ -1773,7 +1732,7 @@ class MLflowManager:
             # Always end run
             with self.lock:
                 try:
-                    if self._mlflow.active_run():
+                    if self._mlflow is not None and self._mlflow.active_run():
                         self._mlflow.end_run()
                     self._active_run_id = None
                 except Exception:
@@ -1789,10 +1748,11 @@ class MLflowManager:
             clean = {
                 k: float(v)
                 for k, v in metrics.items()
-                if isinstance(v, (int, float, np.number)) and np.isfinite(v)
+                if isinstance(v, int | float | np.number) and np.isfinite(v)
             }
 
             with self.lock:
+                assert self._mlflow is not None
                 if self._mlflow.active_run():
                     self._mlflow.log_metrics(clean)
         except Exception as e:
@@ -1813,7 +1773,7 @@ class MLflowManager:
         try:
             with self.lock:
                 # Convert non-serializable objects to dicts
-                clean_metadata = {}
+                clean_metadata: dict[str, Any] = {}
 
                 for key, value in metadata.items():
                     if key == "target_transformation":
@@ -1846,11 +1806,11 @@ class MLflowManager:
                             # String representation
                             clean_metadata[key] = str(value)
 
-                    elif isinstance(value, (str, int, float, bool, type(None))):
+                    elif isinstance(value, str | int | float | bool | type(None)):
                         # Already serializable
                         clean_metadata[key] = value
 
-                    elif isinstance(value, (list, tuple)):
+                    elif isinstance(value, list | tuple):
                         # Convert to list
                         clean_metadata[key] = list(value)
 
@@ -1863,7 +1823,7 @@ class MLflowManager:
                         clean_metadata[key] = str(value)
 
                 # Log model with cleaned metadata
-                model_info = self._mlflow.sklearn.log_model(
+                model_info = self._mlflow.sklearn.log_model(  # type: ignore[union-attr]
                     sk_model=model,
                     artifact_path="model",
                     signature=signature,
@@ -1878,19 +1838,18 @@ class MLflowManager:
                     clean_params = {
                         k: v
                         for k, v in params.items()
-                        if isinstance(v, (str, int, float, bool, type(None)))
+                        if isinstance(v, str | int | float | bool | type(None))
                     }
                     if clean_params:
-                        self._mlflow.log_params(clean_params)
+                        self._mlflow.log_params(clean_params)  # type: ignore[union-attr]
 
                 logger.info(f"  ✅ Registered to MLflow: insurance_{model_name}")
 
+                assert self._mlflow is not None
                 return {
                     "mlflow_model_uri": model_info.model_uri,
                     "mlflow_run_id": (
-                        self._mlflow.active_run().info.run_id
-                        if self._mlflow.active_run()
-                        else None
+                        self._mlflow.active_run().info.run_id if self._mlflow.active_run() else ""
                     ),
                 }
 
@@ -1916,7 +1875,7 @@ class VisualizationManager:
         sns.set_palette("husl")
 
         # Track failures
-        self.failed_plots = []
+        self.failed_plots: list[tuple[str, str]] = []
 
     def _safe_save_plot(self, filename: str) -> str | None:
         """Save plot with error handling"""
@@ -1996,12 +1955,10 @@ class VisualizationManager:
             cv_stds = [successful[m]["cv_std"] for m in models]
 
             y_pos = np.arange(len(models))
-            axes[1, 1].barh(
-                y_pos, cv_means, xerr=cv_stds, color="mediumpurple", alpha=0.7
-            )
+            axes[1, 1].barh(y_pos, cv_means, xerr=cv_stds, color="mediumpurple", alpha=0.7)
             axes[1, 1].set_yticks(y_pos)
             axes[1, 1].set_yticklabels(models)
-            # FIX BUG-3: CV scores are computed in yeo-johnson transformed space
+            # CV scores are computed in yeo-johnson transformed space
             # (range ~0–4), NOT in dollars. The axis previously showed a bare
             # number like "0.28" that looked like a dollar RMSE in the thousands.
             # Model selection is unaffected (all models scored in the same space),
@@ -2041,7 +1998,7 @@ class VisualizationManager:
 class ModelTrainer:
     """Production ML training pipeline with config.yaml single source of truth"""
 
-    # FIX-AUDIT-P3: Pipeline contract validation — catches self-contradictory config
+    # Pipeline contract validation — catches self-contradictory config
     # BEFORE any training starts. Without this, a contradictory config (e.g. quantile
     # objective + require_bias_correction=True) silently runs for 600+ seconds then
     # fails at the very last stage (test evaluation). This pre-flight check fails in
@@ -2067,9 +2024,7 @@ class ModelTrainer:
             is_quantile = "quantile" in objective
 
             # Contract: quantile model must NOT require bias correction
-            require_bc = raw_config.get("training", {}).get(
-                "require_bias_correction", False
-            )
+            require_bc = raw_config.get("training", {}).get("require_bias_correction", False)
             if is_quantile and require_bc:
                 raise ValueError(
                     f"❌ PIPELINE CONTRACT VIOLATION (detected at startup — no training wasted):\n"
@@ -2094,9 +2049,7 @@ class ModelTrainer:
                         f"   ✅ FIX: Add 'quantile_alpha: 0.65' under models.{model_name} in config.yaml."
                     )
 
-        logger.info(
-            "✅ Pipeline contracts validated — no conflicting configuration detected."
-        )
+        logger.info("✅ Pipeline contracts validated — no conflicting configuration detected.")
 
     def __init__(self, config_dict: dict | None = None):
         """
@@ -2143,18 +2096,16 @@ class ModelTrainer:
 
             self.check_gpu_available = check_gpu_available
             self.get_gpu_memory_usage = get_gpu_memory_usage
-            self.clear_gpu_cache = clear_gpu_cache
+            self._clear_gpu_cache_fn = clear_gpu_cache
             self.get_model_gpu_params = get_model_gpu_params
 
         except ImportError as e:
-            raise ImportError(f"Required modules missing: {e}")
+            raise ImportError(f"Required modules missing: {e}") from e
 
         # Configuration from single source
         if config_dict is None:
             raw_config = self.load_config()
-            logger.info(
-                "✅ Configuration loaded from config.yaml (single source of truth)"
-            )
+            logger.info("✅ Configuration loaded from config.yaml (single source of truth)")
         else:
             raw_config = config_dict
             logger.info("✅ Configuration provided (ensure it came from load_config())")
@@ -2162,7 +2113,7 @@ class ModelTrainer:
         self.config = Config.from_dict(raw_config)
         self.raw_config = raw_config
 
-        # FIX-AUDIT-P3: Fail fast on contradictory config before any work is done.
+        # Fail fast on contradictory config before any work is done.
         self._validate_pipeline_contracts(raw_config)
 
         #  Extract configurations from single sources
@@ -2217,9 +2168,7 @@ class ModelTrainer:
                 logger.debug(f"GPU memory pre-flight check failed: {e}")
 
         self.resources = ResourceMonitor(self.config.max_memory_mb)
-        self.mlflow = MLflowManager(
-            self.config.enable_mlflow, self.config.register_to_mlflow
-        )
+        self.mlflow = MLflowManager(self.config.enable_mlflow, self.config.register_to_mlflow)
         self.timeout_mgr = TimeoutManager()
         self.viz = VisualizationManager(self.config.reports_dir)
 
@@ -2231,9 +2180,7 @@ class ModelTrainer:
         explainability_cfg = get_explainability_config(raw_config)
 
         self.explainability_config = ExplainabilityConfig(
-            enable_confidence_intervals=explainability_cfg[
-                "enable_confidence_intervals"
-            ],
+            enable_confidence_intervals=explainability_cfg["enable_confidence_intervals"],
             confidence_level=explainability_cfg["confidence_level"],
             enable_shap=explainability_cfg["enable_shap"],
             shap_max_samples=explainability_cfg["shap_max_samples"],
@@ -2282,11 +2229,11 @@ class ModelTrainer:
             )
 
         # Cache for inverse transforms
-        self._transform_cache = {}
-        self._test_transform_cache = {}
+        self._transform_cache: dict[str, Any] = {}
+        self._test_transform_cache: dict[str, Any] = {}
 
         #  Store feature_engineer reference
-        self.feature_engineer = None
+        self.feature_engineer: Any = None
         self._data_prepared = False
 
     def clear_gpu_cache(self):
@@ -2328,7 +2275,7 @@ class ModelTrainer:
     def _set_seeds(self):
         """Set all random seeds for reproducibility.
 
-        ER-06 FIX: torch.manual_seed() is now called unconditionally (when PyTorch
+        torch.manual_seed() is now called unconditionally (when PyTorch
         is importable) so CPU PyTorch ops are seeded even when GPU is unavailable.
         torch.cuda.manual_seed_all() is still gated on gpu_available.
         """
@@ -2421,8 +2368,7 @@ class ModelTrainer:
             if target_col not in df.columns:
                 available = ", ".join(df.columns[:5].tolist())
                 raise ValueError(
-                    f"Target column '{target_col}' not found. "
-                    f"Available: {available}..."
+                    f"Target column '{target_col}' not found. " f"Available: {available}..."
                 )
 
             X, y = df.drop(columns=[target_col]), df[target_col]
@@ -2436,30 +2382,22 @@ class ModelTrainer:
             feat_cfg = self.get_feature_config(self.raw_config)
 
             # Extract settings from config
-            target_transform_cfg = self.raw_config.get("features", {}).get(
-                "target_transform", {}
-            )
+            target_transform_cfg = self.raw_config.get("features", {}).get("target_transform", {})
 
             # Apply parameter overrides
             if target_transform is None:
                 target_transform = target_transform_cfg.get("method", "none")
 
             if remove_outliers is None:
-                outlier_cfg = self.raw_config.get("features", {}).get(
-                    "outlier_removal", {}
-                )
+                outlier_cfg = self.raw_config.get("features", {}).get("outlier_removal", {})
                 remove_outliers = outlier_cfg.get("enabled", True)
 
             if remove_collinear is None:
-                collin_cfg = self.raw_config.get("features", {}).get(
-                    "collinearity_removal", {}
-                )
+                collin_cfg = self.raw_config.get("features", {}).get("collinearity_removal", {})
                 remove_collinear = collin_cfg.get("enabled", True)
 
             if add_polynomials is None:
-                poly_cfg = self.raw_config.get("features", {}).get(
-                    "polynomial_features", {}
-                )
+                poly_cfg = self.raw_config.get("features", {}).get("polynomial_features", {})
                 add_polynomials = poly_cfg.get("enabled", True)
 
             if stratify is None:
@@ -2476,11 +2414,9 @@ class ModelTrainer:
             logger.info("=" * 80 + "\n")
 
             # Split data
-            X_train, X_val, X_test, y_train, y_val, y_test = self._split_data(
-                X, y, stratify
-            )
+            X_train, X_val, X_test, y_train, y_val, y_test = self._split_data(X, y, stratify)
 
-            # ── FIX BUG-2: persist exact test-set indices so evaluate.py uses
+            # persist exact test-set indices so evaluate.py uses
             # the identical held-out split regardless of stratify_splits setting.
             # Without this, evaluate.py re-splits independently and (with
             # stratify=true) 81 % of its "test" rows come from the training fold.
@@ -2583,7 +2519,7 @@ class ModelTrainer:
                 "X_val": X_val_proc,
                 "y_train": y_train_proc,
                 "y_val": y_val_proc,
-                # FIX-2: original-scale (pre-transform) targets for sample weight calculation.
+                # original-scale (pre-transform) targets for sample weight calculation.
                 # y_train/y_val above are YJ-transformed (range ~6-15). calculate_sample_weights()
                 # needs dollar-scale values to set tier boundaries correctly. Without this,
                 # all training rows land in the same weight tier → near-uniform weights.
@@ -2611,7 +2547,7 @@ class ModelTrainer:
 
         if stratify and len(y.unique()) > 20:
             try:
-                # BUG-5 FIX (v7.5.0): Add P99 bin to stratification quantiles.
+                # (v7.5.0): Add P99 bin to stratification quantiles.
                 # Without it, the ~13 extreme-outlier samples (P95–P100) land
                 # unevenly across splits by chance — prior run showed test max
                 # = $48,970 vs val max = $63,770, making test set structurally
@@ -2631,7 +2567,7 @@ class ModelTrainer:
                         0.95,
                         0.99,
                         1.0,
-                    ],  # BUG-5 FIX: was [0,.25,.5,.75,.9,.95,1.0]
+                    ],
                     labels=False,
                     duplicates="drop",
                 )
@@ -2683,9 +2619,7 @@ class ModelTrainer:
                 random_state=self.config.random_state,
             )
 
-        logger.info(
-            f"Split: Train={len(X_train)}, Val={len(X_val)}, Test={len(X_test)}"
-        )
+        logger.info(f"Split: Train={len(X_train)}, Val={len(X_val)}, Test={len(X_test)}")
 
         # Validate high-value representation
         q75_global = np.percentile(y, 75)
@@ -2727,9 +2661,7 @@ class ModelTrainer:
             )
 
         # Check for validation set having harder cases
-        val_difficulty = (y_val > y.quantile(0.75)).mean() / (
-            y_train > y.quantile(0.75)
-        ).mean()
+        val_difficulty = (y_val > y.quantile(0.75)).mean() / (y_train > y.quantile(0.75)).mean()
 
         if val_difficulty > 1.2:
             logger.warning(
@@ -2810,15 +2742,13 @@ class ModelTrainer:
             )
 
         # Generate cache key
-        array_hash = hashlib.sha256(y_transformed.tobytes()).hexdigest()[
-            :16
-        ]  # Longer hash
+        array_hash = hashlib.sha256(y_transformed.tobytes()).hexdigest()[:16]  # Longer hash
         full_key = f"{cache_key}_{array_hash}_{y_transformed.shape}_{target_transformation.method}"
 
         # Check cache
         if full_key in self._transform_cache:
             logger.debug(f"Using cached transform: {cache_key} (hash: {array_hash})")
-            return self._transform_cache[full_key]
+            return np.asarray(self._transform_cache[full_key])
 
         # Compute inverse transform
         try:
@@ -2846,7 +2776,7 @@ class ModelTrainer:
             del self._transform_cache[oldest]
             logger.debug(f"Evicted oldest cache entry: {oldest[:20]}...")
 
-        return result
+        return np.asarray(result)
 
     def _calculate_cv_manual(
         self,
@@ -2865,21 +2795,17 @@ class ModelTrainer:
             model_params: Model constructor kwargs, may include GPU params.
             y_original: Original-scale target (pre-transformation). When provided,
                 sample weights are computed from original-scale quantiles.
-                ML-01 FIX: always pass y_original from the pre-transform split.
+                always pass y_original from the pre-transform split.
         """
         if X is None or y is None:
             return {"cv_mean": 0.0, "cv_std": 0.0, "cv_scores": [0.0], "source": "none"}
 
-        # ER-01 FIX: GPU-specific params must only be passed to GPU-capable models.
+        # GPU-specific params must only be passed to GPU-capable models.
         # Passing device='cuda', tree_method etc. to Ridge/SVR/KNN causes TypeError.
-        _GPU_CAPABLE_MODELS = frozenset(
-            {"xgboost", "xgboost_median", "lightgbm", "lgbm"}
-        )
+        _GPU_CAPABLE_MODELS = frozenset({"xgboost", "xgboost_median", "lightgbm", "lgbm"})
         _model_name = getattr(model_factory, "__name__", "") or ""
         _is_gpu_model = any(n in _model_name.lower() for n in _GPU_CAPABLE_MODELS)
-        _GPU_KEYS = frozenset(
-            {"device", "tree_method", "max_bin", "predictor", "gpu_id"}
-        )
+        _GPU_KEYS = frozenset({"device", "tree_method", "max_bin", "predictor", "gpu_id"})
         if not _is_gpu_model:
             model_params = {k: v for k, v in model_params.items() if k not in _GPU_KEYS}
 
@@ -2904,18 +2830,14 @@ class ModelTrainer:
                     X_val_fold = X.iloc[val_idx]
                     y_val_fold = y.iloc[val_idx]
 
-                    # ML-01 FIX: pass original-scale fold target for correct weight quantiles.
-                    y_orig_fold = (
-                        y_original.iloc[train_idx] if y_original is not None else None
-                    )
+                    # pass original-scale fold target for correct weight quantiles.
+                    y_orig_fold = y_original.iloc[train_idx] if y_original is not None else None
                     sample_weights = calculate_sample_weights(
                         y_train_fold, self.raw_config, y_original=y_orig_fold
                     )
 
                     # Train with weights
-                    fold_model.fit(
-                        X_train_fold, y_train_fold, sample_weight=sample_weights
-                    )
+                    fold_model.fit(X_train_fold, y_train_fold, sample_weight=sample_weights)
                     y_pred = fold_model.predict(X_val_fold)
 
                     from sklearn.metrics import mean_squared_error
@@ -2991,8 +2913,7 @@ class ModelTrainer:
         if missing:
             available = list(metrics.keys())[:10]
             raise ValueError(
-                f"Metrics missing keys {missing} in {context}. "
-                f"Available keys: {available}"
+                f"Metrics missing keys {missing} in {context}. " f"Available keys: {available}"
             )
 
         # Define secondary metrics that can be NaN in degenerate cases
@@ -3008,13 +2929,11 @@ class ModelTrainer:
 
         # Check for inf/nan - but allow NaN for secondary metrics
         for key, value in metrics.items():
-            if isinstance(value, (int, float, np.number)):
+            if isinstance(value, int | float | np.number):
                 if not np.isfinite(value):
                     if key not in secondary_metrics:
                         # Primary metric is not finite - fatal error
-                        raise ValueError(
-                            f"Metric '{key}' is not finite: {value} in {context}"
-                        )
+                        raise ValueError(f"Metric '{key}' is not finite: {value} in {context}")
                     else:
                         # Secondary metric NaN is acceptable (log it but continue)
                         logger.debug(
@@ -3080,9 +2999,7 @@ class ModelTrainer:
         if not enable_explainability:
             logger.info("⚡ Fast mode: SHAP explainability DISABLED (30-60% faster)")
         else:
-            logger.warning(
-                "🐌 Slow mode: SHAP explainability ENABLED (will take 30-60 seconds)"
-            )
+            logger.warning("🐌 Slow mode: SHAP explainability ENABLED (will take 30-60 seconds)")
 
         start_time = time.time()
 
@@ -3090,9 +3007,7 @@ class ModelTrainer:
         try:
             # Ensure data has been prepared via prepare_training_data()
             if not getattr(self, "_data_prepared", False):
-                raise RuntimeError(
-                    "Must call prepare_training_data() before train_single_model()."
-                )
+                raise RuntimeError("Must call prepare_training_data() before train_single_model().")
 
             if not self.resources.check_threshold():
                 result["error"] = "Memory threshold exceeded"
@@ -3113,16 +3028,12 @@ class ModelTrainer:
                 transform_method = feature_engineer.target_transformation.method
                 logger.debug(f"📋 Transform method detected: {transform_method}")
             else:
-                logger.warning(
-                    "⚠️ feature_engineer missing target_transformation attribute"
-                )
+                logger.warning("⚠️ feature_engineer missing target_transformation attribute")
                 transform_method = "none"
 
             # Validate critical attributes exist
             critical_attrs = ["scaler", "target_transformation", "_continuous_features"]
-            missing_attrs = [
-                attr for attr in critical_attrs if not hasattr(feature_engineer, attr)
-            ]
+            missing_attrs = [attr for attr in critical_attrs if not hasattr(feature_engineer, attr)]
 
             if missing_attrs:
                 raise ValueError(
@@ -3155,9 +3066,7 @@ class ModelTrainer:
                                 "Ensure transform_target(fit=True) was called during data preparation."
                             )
 
-                        if not hasattr(
-                            feature_engineer.yeo_johnson_transformer, "lambdas_"
-                        ):
+                        if not hasattr(feature_engineer.yeo_johnson_transformer, "lambdas_"):
                             raise ValueError(
                                 "Yeo-Johnson transformer missing lambdas_ attribute. "
                                 "Transformer was not properly fitted."
@@ -3217,8 +3126,7 @@ class ModelTrainer:
         # Model training
         with self.mlflow.run(f"{model_name}_run"):
             try:
-                with self.timeout_mgr.time_limit(self.config.training_timeout) as tm:
-
+                with self.timeout_mgr.time_limit(self.config.training_timeout):
                     from insurance_ml.models import get_model_gpu_params
 
                     gpu_params = get_model_gpu_params(model_name, self.raw_config)
@@ -3230,7 +3138,7 @@ class ModelTrainer:
                         # Calculate sample weights BEFORE Optuna
                         sample_weights = None
                         if self.config.use_sample_weights:
-                            # FIX-2: pass y_original (dollar scale) so tier boundaries
+                            # pass y_original (dollar scale) so tier boundaries
                             # are correct. y_train here is YJ-transformed (~6-15 range).
                             sample_weights = calculate_sample_weights(
                                 y_train,
@@ -3245,28 +3153,23 @@ class ModelTrainer:
                                     f"     Mean: {sample_weights.mean():.4f}"
                                 )
                             else:
-                                logger.warning(
-                                    "  ⚠️ Sample weight calculation returned None"
-                                )
+                                logger.warning("  ⚠️ Sample weight calculation returned None")  # type: ignore[unreachable]
 
-                        # QUANTILE FIX: progressive_log weights are incompatible with
+                        # progressive_log weights are incompatible with
                         # pinball (quantile) loss. For squarederror, upweighting a sample
                         # pulls the conditional mean toward it — the intended behaviour.
                         # For quantile loss, upweighting a high-value sample forces the
                         # predicted quantile upward to "protect" it, shifting the effective
                         # quantile ~21–44pp above alpha regardless of the alpha setting.
                         # Measured: alpha=0.36 + progressive_log weights → 81% overpricing.
-                        # Fix: suppress weights for any quantile objective so pinball loss
+                        # suppress weights for any quantile objective so pinball loss
                         # operates on the unconditional data distribution as intended.
                         _optuna_objective = (
                             self.raw_config.get("models", {})
                             .get(model_name, {})
                             .get("objective", "")
                         )
-                        if (
-                            "quantile" in _optuna_objective
-                            and sample_weights is not None
-                        ):
+                        if "quantile" in _optuna_objective and sample_weights is not None:
                             logger.info(
                                 "  ℹ️  Quantile model '%s': sample weights suppressed.\n"
                                 "     progressive_log weights shift effective quantile ~21pp\n"
@@ -3277,7 +3180,7 @@ class ModelTrainer:
                             )
                             sample_weights = None
 
-                        # SCORING FIX v2: hybrid scoring mode's RMSE component (70% weight)
+                        # hybrid scoring mode's RMSE component (70% weight)
                         # biases hyperparameter selection toward mean-predicting configs,
                         # inflating the effective quantile above alpha.
                         #
@@ -3286,17 +3189,14 @@ class ModelTrainer:
                         # raw_config had no effect — optuna_config was already built
                         # at OptunaOptimizer.__init__ time and reads from its own copy.
                         #
-                        # Fix: patch self.optimizer.optuna_config directly.
+                        # patch self.optimizer.optuna_config directly.
                         # optimize_model() reads scoring_mode from optuna_config at
                         # call time (not cached further), so this patch takes effect
                         # immediately and is restored after the call — safe for
                         # sequential model training.
                         _scoring_override_applied = False
                         _original_scoring_mode = None
-                        if (
-                            "quantile" in _optuna_objective
-                            and self.optimizer is not None
-                        ):
+                        if "quantile" in _optuna_objective and self.optimizer is not None:
                             _override_mode = (
                                 self.raw_config.get("optuna", {})
                                 .get("enhanced_scoring", {})
@@ -3310,17 +3210,15 @@ class ModelTrainer:
                                     "enhanced_scoring_mode", "hybrid"
                                 )
                             ):
-                                _original_scoring_mode = (
-                                    self.optimizer.optuna_config.get(
-                                        "enhanced_scoring_mode", "hybrid"
-                                    )
+                                _original_scoring_mode = self.optimizer.optuna_config.get(
+                                    "enhanced_scoring_mode", "hybrid"
                                 )
                                 # Directly patch the live optuna_config dict.
                                 # This is the dict that optimize_model() reads from
                                 # at lines 2064-2065 and _create_objective reads at 1344.
-                                self.optimizer.optuna_config[
-                                    "enhanced_scoring_mode"
-                                ] = _override_mode
+                                self.optimizer.optuna_config["enhanced_scoring_mode"] = (
+                                    _override_mode
+                                )
                                 _scoring_override_applied = True
                                 logger.info(
                                     "  ℹ️  Quantile model '%s': scoring mode overridden "
@@ -3335,9 +3233,9 @@ class ModelTrainer:
                                 )
 
                         # ── P1-C: inject run_id so Optuna callback can log steps ──
-                        if self.mlflow.enabled and self.mlflow._mlflow.active_run():
+                        if self.mlflow.enabled and self.mlflow._mlflow.active_run():  # type: ignore[union-attr]
                             self.optimizer.optuna_config["_mlflow_run_id"] = (
-                                self.mlflow._mlflow.active_run().info.run_id
+                                self.mlflow._mlflow.active_run().info.run_id  # type: ignore[union-attr]
                             )
                         # ─────────────────────────────────────────────────────────
                         opt_result = self.optimizer.optimize_model(
@@ -3351,10 +3249,7 @@ class ModelTrainer:
 
                         # Restore original scoring mode so the pricing model's
                         # next optimize_model() call uses hybrid as intended.
-                        if (
-                            _scoring_override_applied
-                            and _original_scoring_mode is not None
-                        ):
+                        if _scoring_override_applied and _original_scoring_mode is not None:
                             self.optimizer.optuna_config["enhanced_scoring_mode"] = (
                                 _original_scoring_mode
                             )
@@ -3380,7 +3275,7 @@ class ModelTrainer:
                                 "cv_scores": opt_data.get("cv_scores", []),
                                 "source": "optuna",
                                 "best_params": opt_data.get("best_params", {}),
-                                # FIX-3: Preserve Optuna's pinball-space gap so the
+                                # Preserve Optuna's pinball-space gap so the
                                 # Model Comparison Summary can show it alongside the
                                 # dollar-RMSE gap for quantile models. Without this,
                                 # gap_percent was dropped here and the summary had to
@@ -3389,9 +3284,7 @@ class ModelTrainer:
                                 "train_score": float(opt_data.get("train_rmse", 0.0)),
                             }
                         else:
-                            model_factory = self.model_manager._model_factories[
-                                model_name
-                            ]
+                            model_factory = self.model_manager._model_factories[model_name]
                             cv_result = self._calculate_cv_manual(
                                 model_factory, X_train, y_train, gpu_params
                             )
@@ -3406,17 +3299,13 @@ class ModelTrainer:
                         # ============================================================
                         if hasattr(model, "_validation_residuals"):
                             delattr(model, "_validation_residuals")
-                            logger.debug(
-                                "  🗑️  Invalidated old residuals before calibration"
-                            )
+                            logger.debug("  🗑️  Invalidated old residuals before calibration")
 
                     else:
                         logger.info("  Training with default hyperparameters...")
 
                         if gpu_params:
-                            logger.info(
-                                f"  🚀 Creating {model_name} with GPU acceleration"
-                            )
+                            logger.info(f"  🚀 Creating {model_name} with GPU acceleration")
                             model = self.model_manager.get_model(
                                 model_name, params=gpu_params, gpu=True
                             )
@@ -3427,11 +3316,11 @@ class ModelTrainer:
                         # Calculate sample weights BEFORE training
                         sample_weights = None
                         if self.config.use_sample_weights:
-                            # BUG-B FIX: calculate_sample_weights() has no 'log_stats'
+                            # calculate_sample_weights() has no 'log_stats'
                             # parameter; passing it caused TypeError every time Optuna
                             # was disabled and use_sample_weights=True.  The function
                             # signature is (y, config, validate_distribution=True).
-                            # FIX-2: pass y_original (dollar scale) for correct tier bounds.
+                            # y_original (dollar scale) for correct tier bounds.
                             sample_weights = calculate_sample_weights(
                                 y_train,
                                 self.raw_config,
@@ -3445,9 +3334,7 @@ class ModelTrainer:
                         model_type = type(model).__name__
 
                         if model_type in ["XGBRegressor", "LGBMRegressor"]:
-                            logger.info(
-                                f"  🎯 Training {model_type} with early stopping"
-                            )
+                            logger.info(f"  🎯 Training {model_type} with early stopping")
 
                             model = self.model_manager.fit_with_early_stopping(
                                 model=model,
@@ -3460,13 +3347,9 @@ class ModelTrainer:
                             )
 
                             if sample_weights is not None:
-                                logger.info(
-                                    "  ✅ Trained with early stopping + sample weights"
-                                )
+                                logger.info("  ✅ Trained with early stopping + sample weights")
                             else:
-                                logger.info(
-                                    "  ✅ Trained with early stopping (no weights)"
-                                )
+                                logger.info("  ✅ Trained with early stopping (no weights)")
 
                             # ✅ CENTRALIZED: Store conformal data after early stopping
                             # MetricsExtractor.store_conformal_data(
@@ -3475,24 +3358,17 @@ class ModelTrainer:
 
                         else:
                             # Standard fit for other models
-                            if (
-                                sample_weights is not None
-                                and self._model_supports_sample_weights(model)
+                            if sample_weights is not None and self._model_supports_sample_weights(
+                                model
                             ):
                                 try:
-                                    model.fit(
-                                        X_train, y_train, sample_weight=sample_weights
-                                    )
-                                    logger.info(
-                                        f"  ✅ {model_type} trained with sample weights"
-                                    )
+                                    model.fit(X_train, y_train, sample_weight=sample_weights)
+                                    logger.info(f"  ✅ {model_type} trained with sample weights")
                                 except TypeError as e:
                                     logger.warning(
                                         f"  ⚠️ {model_type} rejected sample_weight parameter: {e}"
                                     )
-                                    logger.info(
-                                        "  Retraining without sample weights..."
-                                    )
+                                    logger.info("  Retraining without sample weights...")
                                     model.fit(X_train, y_train)
                             else:
                                 model.fit(X_train, y_train)
@@ -3530,24 +3406,24 @@ class ModelTrainer:
                     if use_calibration:
                         logger.info("🔧 Applying isotonic calibration...")
 
-                        # FIX BUG-1A: CalibratedModel is only imported inside main()
+                        # CalibratedModel is only imported inside main()
                         # (line ~4483) and is not available at module scope or in this
                         # method's scope. Import it locally here.
                         from insurance_ml.models import CalibratedModel
 
-                        # FIX BUG-1B: X_calib / y_calib were referenced below but
+                        # X_calib / y_calib were referenced below but
                         # never defined in this scope (they only exist in main()).
                         # Reserve 40 % of the validation set for conformal calibration;
                         # use the remaining 60 % for isotonic fitting.
                         # Guard: CalibratedModel.fit_calibrator() requires ≥ 50 samples,
                         # so we need at least ceil(50 / 0.6) = 84 total to split safely.
                         _CALIB_MIN = 50  # minimum samples for isotonic fit
-                        # PA-03 FIX: single canonical split ratio read from config.
-                        # The BUG-9 FIX used 0.20 hardcoded while this path used 0.40,
+                        # single canonical split ratio read from config.
+                        # The FIX used 0.20 hardcoded while this path used 0.40,
                         # producing different CI widths across code paths. Now both
                         # paths share one constant from config (fallback 0.40).
                         #
-                        # FIX F-17 — SEMANTIC WARNING: calibration_split_ratio has
+                        # SEMANTIC WARNING: calibration_split_ratio has
                         # INVERTED naming relative to its effect.  A value of 0.20
                         # means 20% goes to holdout (test_size=0.20) and 80% stays
                         # as the calibration set — NOT 20% for calibration.
@@ -3573,7 +3449,7 @@ class ModelTrainer:
                                 random_state=self.config.random_state,
                             )
                         else:
-                            # PA-03 FIX: do NOT alias X_fit_cal = X_calib when val is too small —
+                            # do NOT alias X_fit_cal = X_calib when val is too small —
                             # that causes circular conformal evaluation (fit on same set as holdout).
                             # Instead, skip calibration entirely for this model.
                             logger.warning(
@@ -3586,15 +3462,11 @@ class ModelTrainer:
                             use_calibration = False
 
                         # Step 1: Wrap model with calibration
-                        # BUG-A FIX: CalibratedModel.__init__ accepts
+                        # CalibratedModel.__init__ accepts
                         # 'calibration_method', not 'method'. Passing the wrong
                         # keyword raised TypeError on every calibrated training run.
-                        calibrated_model = CalibratedModel(
-                            model, calibration_method="isotonic"
-                        )
-                        calibrated_model.fit_calibrator(
-                            X_fit_cal, y_fit_cal
-                        )  # fit on 60 %
+                        calibrated_model = CalibratedModel(model, calibration_method="isotonic")
+                        calibrated_model.fit_calibrator(X_fit_cal, y_fit_cal)  # fit on 60 %
 
                         # Step 2: Store conformal data from calibrated model (SINGLE SOURCE OF TRUTH)
                         success = MetricsExtractor.store_conformal_data(
@@ -3630,7 +3502,7 @@ class ModelTrainer:
                     else:
                         # No isotonic calibration.
                         #
-                        # BUG-9 FIX (v7.5.0): Increase conformal calibration fraction
+                        # (v7.5.0): Increase conformal calibration fraction
                         # from 60% to 80% (holdout 40%→20%).
                         #
                         # Root cause of $69K avg CI width:
@@ -3640,7 +3512,7 @@ class ModelTrainer:
                         #   (~3.32 YJ units) sets the local_q for ALL high-value test
                         #   points before the 99th-pctile Winsorisation cap.
                         #
-                        # Fix: test_size=0.20 → n_cal = 268×0.80 = ~214 samples
+                        # test_size=0.20 → n_cal = 268×0.80 = ~214 samples
                         #   214//30 = 7 bins  (2 more bins, better tail resolution)
                         #   Holdout: 268×0.20 = ~54 samples (still > 30 minimum).
                         #   Expected CI width reduction: ~15–25% from finer binning.
@@ -3650,7 +3522,7 @@ class ModelTrainer:
                         # adaptiveness, not marginal validity.
                         _n_val = len(X_val)
                         _MIN_CONFORMAL_SAMPLES = 30
-                        # PA-03 FIX: use the same _CONF_SPLIT_RATIO as the calibrated path.
+                        # use the same _CONF_SPLIT_RATIO as the calibrated path.
                         _conf_split_ratio = float(
                             self.raw_config.get("conformal", {}).get(
                                 "calibration_split_ratio", 0.20
@@ -3678,7 +3550,7 @@ class ModelTrainer:
                                 f"{_conf_calibration_frac*100:.0f}/{_conf_split_ratio*100:.0f})"
                             )
                         else:
-                            # ML-04 FIX: do NOT alias _X_conf = _X_holdout when the val set is
+                            # do NOT alias _X_conf = _X_holdout when the val set is
                             # too small.  Using the same set for both fitting conformal quantiles
                             # and measuring CI coverage produces circular, optimistically biased
                             # coverage metrics that silently pass G3 gate.  Instead: log clearly
@@ -3707,7 +3579,7 @@ class ModelTrainer:
                                     "✅ Stored conformal data (calibration set, holdout-safe)"
                                 )
 
-                                # ── C1 FIX (v7.5.4): pre-compute heteroscedastic bins ──────────
+                                # ── (v7.5.4): pre-compute heteroscedastic bins ──────────
                                 # SEQUENCING: save_model() runs after this block, so bins stored
                                 # here are serialized into the artifact automatically.
                                 # explain_predictions() runs AFTER save_model() — too late.
@@ -3716,7 +3588,7 @@ class ModelTrainer:
                                 try:
                                     _ci_residuals = model._validation_residuals
                                     _ci_preds = model._validation_predictions
-                                    # T1 FIX: replaced 115-line inline bin computation
+                                    # replaced 115-line inline bin computation
                                     # with a call to the canonical static utility in
                                     # ModelManager.  The inline block was a verbatim copy
                                     # of the logic in _calculate_conformal_intervals —
@@ -3744,9 +3616,7 @@ class ModelTrainer:
                                         winsor_pct=95,
                                     )
                                     if _hetero_bins is not None:
-                                        model._conformal_data[
-                                            "heteroscedastic_bins"
-                                        ] = _hetero_bins
+                                        model._conformal_data["heteroscedastic_bins"] = _hetero_bins
                                         logger.info(
                                             f"✅ Stored heteroscedastic bins in _conformal_data "
                                             f"({_hetero_bins['n_bins']} bins, "
@@ -3765,11 +3635,9 @@ class ModelTrainer:
                                     )
                         else:
                             success = False
-                            logger.info(
-                                "⏭️  Conformal data skipped (val set too small)."
-                            )
+                            logger.info("⏭️  Conformal data skipped (val set too small).")
 
-                        # ── FIX #7: Refit conformal residuals on post-hybrid-calibration ──
+                        # ── Refit conformal residuals on post-hybrid-calibration ──
                         #
                         # Context: HybridPredictor applies `calibration_factor` in ORIGINAL
                         # dollar space (ml_predictions_calibrated = ml_predictions * factor,
@@ -3796,24 +3664,23 @@ class ModelTrainer:
                         # the raw dict — causing _calibration_factor to silently stay 1.0
                         # and the conformal refit to be skipped every training run.
                         _hybrid_cfg = self.raw_config.get("hybrid_predictor", {})
-                        # FIX F-03 / U-10: Previous code read calibration.factor (legacy
+                        # Previous code read calibration.factor (legacy
                         # single-model key, always 1.00), never the per-model
                         # pricing_factor / risk_factor keys.  Because factor=1.00, the
                         # gate `if _calibration_factor != 1.0` was always False and the
                         # entire conformal refit block was silently skipped every run.
-                        # Fix: resolve pricing_factor first (operative key for
+                        # resolve pricing_factor first (operative key for
                         # xgboost_median / reg:squarederror), falling back to risk_factor
                         # then legacy factor for backward compatibility.  This mirrors the
-                        # resolution order in HybridPredictor.__init__ (BUG-5 fix).
+                        # resolution order in HybridPredictor.__init__.
                         _cal_sub = _hybrid_cfg.get("calibration", {})
-                        # FIX F-03 (revised): previous fix used
+                        # (revised): previous fix used
                         #   getattr(self.model_manager, "active_model_name", "")
                         # but ModelManager has no active_model_name attribute, so getattr
                         # silently returned "" on every call.  That made _use_pricing always
                         # False, _calibration_factor always read risk_factor (not
                         # pricing_factor), and the entire conformal refit block was silently
                         # skipped every training run — the same failure mode as before the fix.
-                        #
                         # Correct approach: use model_name, the enclosing for-loop variable
                         # (first assigned at line ~2068, mutated to f"{model_name}_calibrated"
                         # at line ~3626 if the calibrated-isotonic branch ran).  Strip the
@@ -3822,9 +3689,7 @@ class ModelTrainer:
                         _active_model_name = model_name.replace("_calibrated", "")
                         _use_pricing = (
                             "median" in _active_model_name.lower()
-                            or "squarederror" in str(
-                                _cal_sub.get("objective", "")
-                            ).lower()
+                            or "squarederror" in str(_cal_sub.get("objective", "")).lower()
                         )
                         if _use_pricing:
                             _calibration_factor = float(
@@ -3840,16 +3705,12 @@ class ModelTrainer:
                                     _cal_sub.get("factor", 1.0),
                                 )
                             )
-                        _apply_to_ml_only = bool(
-                            _cal_sub.get("apply_to_ml_only", True)
-                        )
+                        _apply_to_ml_only = bool(_cal_sub.get("apply_to_ml_only", True))
 
                         if _calibration_factor != 1.0:
                             try:
                                 y_val_arr = (
-                                    y_val.values
-                                    if hasattr(y_val, "values")
-                                    else np.array(y_val)
+                                    y_val.values if hasattr(y_val, "values") else np.array(y_val)
                                 )
                                 y_pred_uncalibrated_transformed = model.predict(X_val)
 
@@ -3891,9 +3752,7 @@ class ModelTrainer:
 
                                 if y_pred_calibrated_transformed is not None:
                                     # Step 5: residuals in transformed space
-                                    residuals_calibrated = (
-                                        y_val_arr - y_pred_calibrated_transformed
-                                    )
+                                    residuals_calibrated = y_val_arr - y_pred_calibrated_transformed
 
                                     # Replace the stored residuals
                                     model._validation_residuals = residuals_calibrated
@@ -3901,12 +3760,12 @@ class ModelTrainer:
                                     if hasattr(model, "_conformal_data") and isinstance(
                                         model._conformal_data, dict
                                     ):
-                                        model._conformal_data[
-                                            "validation_predictions"
-                                        ] = y_pred_calibrated_transformed.tolist()
-                                        model._conformal_data[
-                                            "validation_residuals"
-                                        ] = residuals_calibrated.tolist()
+                                        model._conformal_data["validation_predictions"] = (
+                                            y_pred_calibrated_transformed.tolist()
+                                        )
+                                        model._conformal_data["validation_residuals"] = (
+                                            residuals_calibrated.tolist()
+                                        )
                                         model._conformal_data["context"] = (
                                             "final_hybrid_calibrated_correct_space"
                                         )
@@ -3928,19 +3787,16 @@ class ModelTrainer:
                                     # fall back to the original (approximate) method with
                                     # an explicit warning so it shows up in training logs.
                                     logger.warning(
-                                        f"⚠️  FIX #7: feature_engineer.transform_target() not "
-                                        f"available — falling back to applying calibration factor "
-                                        f"directly in transformed space (approximation).\n"
-                                        f"   This is less accurate for yeo-johnson targets.\n"
-                                        f"   Add transform_target() to FeatureEngineer to fix."
+                                        "⚠️  FIX #7: feature_engineer.transform_target() not "
+                                        "available — falling back to applying calibration factor "
+                                        "directly in transformed space (approximation).\n"
+                                        "   This is less accurate for yeo-johnson targets.\n"
+                                        "   Add transform_target() to FeatureEngineer to fix."
                                     )
                                     y_pred_calibrated_approx = (
-                                        y_pred_uncalibrated_transformed
-                                        * _calibration_factor
+                                        y_pred_uncalibrated_transformed * _calibration_factor
                                     )
-                                    residuals_calibrated = (
-                                        y_val_arr - y_pred_calibrated_approx
-                                    )
+                                    residuals_calibrated = y_val_arr - y_pred_calibrated_approx
                                     model._validation_residuals = residuals_calibrated
 
                             except Exception as _e7:
@@ -3972,9 +3828,7 @@ class ModelTrainer:
 
                             if base_score is not None and isinstance(base_score, str):
                                 # Check if in array format: "[value]"
-                                if base_score.startswith("[") and base_score.endswith(
-                                    "]"
-                                ):
+                                if base_score.startswith("[") and base_score.endswith("]"):
                                     numeric_str = base_score.strip("[]")
                                     numeric_value = float(numeric_str)
                                     booster.set_attr(base_score=str(numeric_value))
@@ -3994,9 +3848,7 @@ class ModelTrainer:
                                         )
                                         booster.set_attr(base_score="0.5")
                             elif base_score is None:
-                                logger.debug(
-                                    "🔧 XGBoost missing base_score, setting default: 0.5"
-                                )
+                                logger.debug("🔧 XGBoost missing base_score, setting default: 0.5")
                                 booster.set_attr(base_score="0.5")
 
                         except Exception as e:
@@ -4008,13 +3860,9 @@ class ModelTrainer:
                             )
                             try:
                                 model.get_booster().set_attr(base_score="0.5")
-                                logger.warning(
-                                    "✅ Emergency fallback successful: base_score=0.5"
-                                )
+                                logger.warning("✅ Emergency fallback successful: base_score=0.5")
                             except Exception as fallback_error:
-                                logger.error(
-                                    f"❌ Emergency fallback also failed: {fallback_error}"
-                                )
+                                logger.error(f"❌ Emergency fallback also failed: {fallback_error}")
                                 raise RuntimeError(
                                     f"Cannot normalize XGBoost base_score. "
                                     f"Model cannot be used with SHAP. "
@@ -4029,9 +3877,7 @@ class ModelTrainer:
                         y_val_pred_transformed = model.predict(X_val)
 
                         # Calculate residuals in TRANSFORMED space
-                        validation_residuals = (
-                            y_val_transformed_array - y_val_pred_transformed
-                        )
+                        validation_residuals = y_val_transformed_array - y_val_pred_transformed
 
                         # Validate residuals
                         if not np.all(np.isfinite(validation_residuals)):
@@ -4050,7 +3896,7 @@ class ModelTrainer:
                         # Attach to model instance
                         model._validation_residuals = validation_residuals
 
-                        # ISSUE 2 FIX: preserve the full-val predictions (268 samples)
+                        # preserve the full-val predictions (268 samples)
                         # as a separate attribute BEFORE store_conformal_data() is called
                         # below with the 160-sample conformal calibration split.
                         # store_conformal_data() overwrites model._validation_predictions
@@ -4060,9 +3906,7 @@ class ModelTrainer:
                         # calibration set unnecessarily.
                         # explain_predictions() in models.py prefers this attribute
                         # over _validation_predictions when both are present.
-                        model._full_validation_predictions = (
-                            y_val_pred_transformed.copy()
-                        )
+                        model._full_validation_predictions = y_val_pred_transformed.copy()
 
                         # ================================================================
                         # RESIDUAL DIAGNOSTICS
@@ -4072,28 +3916,18 @@ class ModelTrainer:
                         logger.info("=" * 80)
 
                         try:
-                            residual_diagnostics = (
-                                self.model_manager.diagnose_residuals(
-                                    validation_residuals=validation_residuals,
-                                    save_plot=True,
-                                    save_path=str(
-                                        self.config.reports_dir
-                                        / "residuals"
-                                        / model_name
-                                    ),
-                                )
+                            residual_diagnostics = self.model_manager.diagnose_residuals(
+                                validation_residuals=validation_residuals,
+                                save_plot=True,
+                                save_path=str(self.config.reports_dir / "residuals" / model_name),
                             )
 
                             logger.info("\n📊 Key Findings:")
                             logger.info(
                                 f"   Outlier Rate: {residual_diagnostics['outlier_pct']:.2f}%"
                             )
-                            logger.info(
-                                f"   Skewness: {residual_diagnostics['skewness']:+.3f}"
-                            )
-                            logger.info(
-                                f"   Kurtosis: {residual_diagnostics['kurtosis']:+.3f}"
-                            )
+                            logger.info(f"   Skewness: {residual_diagnostics['skewness']:+.3f}")
+                            logger.info(f"   Kurtosis: {residual_diagnostics['kurtosis']:+.3f}")
 
                             if residual_diagnostics["outlier_pct"] > 5:
                                 logger.warning(
@@ -4136,7 +3970,7 @@ class ModelTrainer:
                             f"     Range: [{validation_residuals.min():+.6f}, {validation_residuals.max():+.6f}]"
                         )
 
-                        # FIX-AUDIT-P5: Use median for systematic bias detection.
+                        # Use median for systematic bias detection.
                         # For skewed residual distributions (skewness > 2 is typical for
                         # insurance), the mean is dominated by the extreme tail and can
                         # be near zero while the median is substantially negative —
@@ -4173,12 +4007,12 @@ class ModelTrainer:
                     # yeo-johnson (median-ratio) formulas, including quantile guard.
                     #
                     # feature_engineer._bias_var_* attributes are written by the
-                    # BUG-D FIX block in main() AFTER all models are trained, using
+                    # block in main() AFTER all models are trained, using
                     # the best model's BiasCorrection. Writing them here per-model
                     # was a duplicate path that diverged whenever the inline logic
                     # was updated independently of calculate_from_model().
                     if transform_method in ["log1p", "yeo-johnson"]:
-                        # FIX-BC-CONFIG: calculate_from_model() has an internal quantile
+                        # calculate_from_model() has an internal quantile
                         # guard but it relies on get_xgb_params() / get_params() which
                         # return the objective string differently across XGBoost versions
                         # (1.x vs 2.x vs 3.x).  Use config.yaml as the version-independent
@@ -4197,7 +4031,7 @@ class ModelTrainer:
                                 f"median-ratio correction incompatible with quantile loss)."
                             )
                             bias_correction = None
-                            # FIX-10: Previously the median-bias warning fired twice with
+                            # Previously the median-bias warning fired twice with
                             # no downstream action, creating a false impression of a silent
                             # bug. Now explicitly log that bias enters production and
                             # document exactly which mechanism handles it.
@@ -4233,9 +4067,7 @@ class ModelTrainer:
                     # ========================================
                     # OPTIMIZED EVALUATION: CONDITIONAL SHAP
                     # ========================================
-                    logger.info(
-                        "📊 Calculating training metrics (fast path - NO SHAP)..."
-                    )
+                    logger.info("📊 Calculating training metrics (fast path - NO SHAP)...")
                     train_metrics, train_preds = self.model_manager.evaluate_model(
                         model,
                         X_train,
@@ -4250,9 +4082,7 @@ class ModelTrainer:
                     self._validate_metrics_dict(train_metrics, "train")
 
                     if enable_explainability:
-                        logger.info(
-                            "📊 Calculating validation metrics WITH explainability..."
-                        )
+                        logger.info("📊 Calculating validation metrics WITH explainability...")
                         logger.warning(
                             "⚠️  SHAP calculation in progress - this will take 30-60 seconds..."
                         )
@@ -4280,18 +4110,14 @@ class ModelTrainer:
                             )
 
                         if val_explanations.get("feature_importance") is not None:
-                            top_features = val_explanations["feature_importance"].head(
-                                5
-                            )
+                            top_features = val_explanations["feature_importance"].head(5)
                             logger.info("   Top 5 SHAP Features:")
                             for idx, row in top_features.iterrows():
                                 logger.info(
                                     f"      {idx+1}. {row['feature']}: {row['importance']:.4f}"
                                 )
                     else:
-                        logger.info(
-                            "📊 Calculating validation metrics (fast path - NO SHAP)..."
-                        )
+                        logger.info("📊 Calculating validation metrics (fast path - NO SHAP)...")
 
                         val_metrics, val_preds = self.model_manager.evaluate_model(
                             model,
@@ -4313,9 +4139,7 @@ class ModelTrainer:
                             "plots": {},
                         }
 
-                        logger.info(
-                            "✅ Fast evaluation complete (SHAP deferred to final model)"
-                        )
+                        logger.info("✅ Fast evaluation complete (SHAP deferred to final model)")
 
                     # Save model
                     elapsed = time.time() - start_time
@@ -4330,9 +4154,7 @@ class ModelTrainer:
                         "target_transformation": target_transformation or "none",
                         "gpu_params": str(gpu_params) if gpu_params else "none",
                         "explainability_enabled": enable_explainability,
-                        "bias_correction": (
-                            bias_correction.to_dict() if bias_correction else None
-                        ),
+                        "bias_correction": (bias_correction.to_dict() if bias_correction else None),
                         # ── PATCH 03 (G4/G9): inject provenance fields ───────────
                         # _provenance is set on the trainer instance in main() via
                         # trainer._provenance = capture_git_provenance() before any
@@ -4361,9 +4183,7 @@ class ModelTrainer:
                     checksum = ""
                     if self.config.save_checksums:
                         checksum = FileSanitizer.compute_checksum(model_path)
-                        checksum_path = (
-                            self.config.output_dir / f"{safe_name}_checksum.txt"
-                        )
+                        checksum_path = self.config.output_dir / f"{safe_name}_checksum.txt"
                         with open(checksum_path, "w") as f:
                             f.write(f"{checksum}\n")
 
@@ -4388,13 +4208,13 @@ class ModelTrainer:
                                 )
 
                     # Build result
-                    # ISSUE 4 FIX: model_config was read at comparison-table time via
+                    # model_config was read at comparison-table time via
                     # result.get("model_config", {}).get("objective", "") but never
                     # written — always returning {} → _is_quantile=False → "Moderate
                     # Overfitting" label always shown for reg:quantileerror models.
                     # Extract objective from the trained model so the suppression fires.
                     #
-                    # ISSUE 4 PATCH (v7.4.5): Prefer get_xgb_params() over get_params()
+                    # Prefer get_xgb_params() over get_params()
                     # because it reads the underlying booster config and is more reliable
                     # across XGBoost versions.  Add quantile_alpha presence check as a
                     # belt-and-suspenders guard for builds where objective may be stored
@@ -4412,9 +4232,7 @@ class ModelTrainer:
                                 model.base_model.get_xgb_params().get("objective", "")
                             ).lower()
                         elif hasattr(model, "get_params"):
-                            _objective_str = str(
-                                model.get_params().get("objective", "")
-                            ).lower()
+                            _objective_str = str(model.get_params().get("objective", "")).lower()
                         elif hasattr(model, "base_model") and hasattr(
                             model.base_model, "get_params"
                         ):
@@ -4426,7 +4244,7 @@ class ModelTrainer:
 
                     # Belt-and-suspenders: quantile_alpha presence → quantile XGBoost
                     # regardless of how the objective string is stored.
-                    # FIX-XGB-2X: get_params() alone is insufficient — in XGBoost 2.x
+                    # get_params() alone is insufficient — in XGBoost 2.x
                     # builds where quantile_alpha was passed as a **kwarg it is not
                     # returned by get_params().  Add direct attribute and kwargs checks
                     # so all three storage paths are covered:
@@ -4443,21 +4261,19 @@ class ModelTrainer:
                             if _m_check is not None and (
                                 (
                                     hasattr(_m_check, "get_params")
-                                    and _m_check.get_params().get("quantile_alpha")
-                                    is not None
+                                    and _m_check.get_params().get("quantile_alpha") is not None
                                 )
                                 or getattr(_m_check, "quantile_alpha", None) is not None
                                 or (
                                     isinstance(getattr(_m_check, "kwargs", None), dict)
-                                    and _m_check.kwargs.get("quantile_alpha")
-                                    is not None
+                                    and _m_check.kwargs.get("quantile_alpha") is not None
                                 )
                             ):
                                 _objective_str = "reg:quantileerror"
                         except Exception:
                             pass
 
-                    # FIX-CFG-OBJ: Final fallback — use config.yaml as the definitive
+                    # Final fallback — use config.yaml as the definitive
                     # source of truth for the objective type.  All model-attr checks above
                     # depend on XGBoost storing the objective string in a consistent place,
                     # which varies across versions.  config.yaml is version-independent.
@@ -4480,23 +4296,21 @@ class ModelTrainer:
                             "cv_mean": cv_result["cv_mean"],
                             "cv_std": cv_result["cv_std"],
                             "cv_scores": cv_result.get("cv_scores", []),
-                            # FIX-3: Pinball gap from Optuna (0.0 for non-Optuna/non-quantile runs).
+                            # Pinball gap from Optuna (0.0 for non-Optuna/non-quantile runs).
                             # Distinct from dollar-RMSE gap in MetricsExtractor.calculate_generalization_gap().
                             "pinball_gap_percent": cv_result.get("gap_percent", 0.0),
-                            # FIX-A/B: promote nested val metrics to top-level so model selection in
+                            # promote nested val metrics to top-level so model selection in
                             # train_two_model_architecture() can read them with .get("val_r2", 0).
                             # Previously these keys were absent → all .get() calls returned 0 →
                             # pricing model picked alphabetically, not by performance.
                             "val_rmse": MetricsExtractor.get_rmse(val_metrics),
                             "val_r2": MetricsExtractor.get_r2(val_metrics),
-                            # FIX-C: store pinball_loss so risk model selection uses it directly.
+                            # store pinball_loss so risk model selection uses it directly.
                             # Previously only "cv_mean" existed → risk_results[k].get("pinball_loss", inf)
                             # always returned inf → ML-06 fallback always fired → fell back to val_r2
-                            # which was also broken (Fix A/B above).
+                            # which was also broken (A/B above).
                             "pinball_loss": (
-                                cv_result["cv_mean"]
-                                if "quantile" in _objective_str
-                                else None
+                                cv_result["cv_mean"] if "quantile" in _objective_str else None
                             ),
                             "training_metrics": train_metrics,
                             "validation_metrics": val_metrics,
@@ -4508,38 +4322,31 @@ class ModelTrainer:
                             "model_config": {"objective": _objective_str},
                             "explainability": {
                                 "enabled": enable_explainability,
-                                "confidence_intervals": val_explanations.get(
-                                    "confidence_intervals"
-                                )
+                                "confidence_intervals": val_explanations.get("confidence_intervals")
                                 is not None,
-                                "shap_available": val_explanations.get("shap_values")
-                                is not None,
+                                "shap_available": val_explanations.get("shap_values") is not None,
                                 "feature_importance": (
-                                    val_explanations["feature_importance"].to_dict(
-                                        "records"
-                                    )
-                                    if val_explanations.get("feature_importance")
-                                    is not None
+                                    val_explanations["feature_importance"].to_dict("records")
+                                    if val_explanations.get("feature_importance") is not None
                                     else None
                                 ),
-                                "interval_coverage": val_metrics.get(
-                                    "interval_coverage_pct"
-                                ),
+                                "interval_coverage": val_metrics.get("interval_coverage_pct"),
                                 "interval_width": val_metrics.get("interval_avg_width"),
                             },
                         }
                     )
 
-                    # ── Fix 2: log metrics + params while run is still active ─
+                    # ── log metrics + params while run is still active ─
                     # Insertion point: result.update() has populated all metric
                     # fields; the run closes only when the outer with-block exits.
                     try:
-                        _safe_float = lambda v: (
-                            float(v)
-                            if isinstance(v, (int, float, np.number))
-                            and np.isfinite(float(v))
-                            else None
-                        )
+
+                        def _safe_float(v):
+                            return (
+                                float(v)
+                                if isinstance(v, int | float | np.number) and np.isfinite(float(v))
+                                else None
+                            )
 
                         # Build metric payload from result + val_metrics
                         _mlflow_payload: dict[str, float] = {}
@@ -4574,18 +4381,14 @@ class ModelTrainer:
 
                         # ── P1-D: per-fold CV scores as stepped metrics ───────
                         _cv_scores = result.get("cv_scores", [])
-                        if (
-                            _cv_scores
-                            and self.mlflow.enabled
-                            and self.mlflow._mlflow.active_run()
-                        ):
+                        if _cv_scores and self.mlflow.enabled and self.mlflow._mlflow.active_run():  # type: ignore[union-attr]
                             for _fold_i, _fold_score in enumerate(_cv_scores):
                                 try:
                                     _fv = _safe_float(_fold_score)
                                     if _fv is not None:
                                         with self.mlflow.lock:
-                                            if self.mlflow._mlflow.active_run():
-                                                self.mlflow._mlflow.log_metric(
+                                            if self.mlflow._mlflow.active_run():  # type: ignore[union-attr]
+                                                self.mlflow._mlflow.log_metric(  # type: ignore[union-attr]
                                                     "cv_fold_score", _fv, step=_fold_i
                                                 )
                                 except Exception:
@@ -4595,25 +4398,23 @@ class ModelTrainer:
                         # Log model hyperparams — thread-safe via self.mlflow.lock,
                         # consistent with MLflowManager.log_metrics() internals.
                         _active_model = result.get("model")
-                        if _active_model is not None and hasattr(
-                            _active_model, "get_params"
-                        ):
+                        if _active_model is not None and hasattr(_active_model, "get_params"):
                             _raw_p = _active_model.get_params()
                             _clean_p = {
                                 k: v
                                 for k, v in _raw_p.items()
-                                if isinstance(v, (str, int, float, bool, type(None)))
+                                if isinstance(v, str | int | float | bool | type(None))
                             }
                             if _clean_p and self.mlflow.enabled:
                                 with self.mlflow.lock:
-                                    if self.mlflow._mlflow.active_run():
-                                        self.mlflow._mlflow.log_params(_clean_p)
+                                    if self.mlflow._mlflow.active_run():  # type: ignore[union-attr]
+                                        self.mlflow._mlflow.log_params(_clean_p)  # type: ignore[union-attr]
 
                         # Store run_id so train_all_models() can reopen this run
-                        # after SHAP Phase 2 to append post-SHAP metrics (Fix 3).
+                        # after SHAP Phase 2 to append post-SHAP metrics.
                         result["mlflow_run_id"] = (
-                            self.mlflow._mlflow.active_run().info.run_id
-                            if self.mlflow.enabled and self.mlflow._mlflow.active_run()
+                            self.mlflow._mlflow.active_run().info.run_id  # type: ignore[union-attr]
+                            if self.mlflow.enabled and self.mlflow._mlflow.active_run()  # type: ignore[union-attr]
                             else None
                         )
 
@@ -4622,9 +4423,7 @@ class ModelTrainer:
                     # ─────────────────────────────────────────────────────────
 
             except TimeoutError:
-                result["error"] = (
-                    f"Training timeout after {self.config.training_timeout}s"
-                )
+                result["error"] = f"Training timeout after {self.config.training_timeout}s"
                 result["training_time"] = time.time() - start_time
                 logger.error(f"❌ {result['error']}")
 
@@ -4675,16 +4474,12 @@ class ModelTrainer:
         )
 
         logger.info(f"\n{'='*80}\nTraining {len(models)} models\n{'='*80}")
-        logger.info(
-            "💡 OPTIMIZATION: SHAP explainability DISABLED during bulk training"
-        )
+        logger.info("💡 OPTIMIZATION: SHAP explainability DISABLED during bulk training")
         logger.info("   SHAP will only run on the final best model\n")
 
-        results: dict[str, TrainingResult] = {}
+        results: dict[str, Any] = {}
         preprocessor_saved = False
-        _prep_path_for_bc = processed_data.get(
-            "preprocessor_path"
-        )  # Initialize at function scope
+        _prep_path_for_bc = processed_data.get("preprocessor_path")  # Initialize at function scope
 
         # ========================================
         # PHASE 1: Fast training (NO SHAP)
@@ -4737,10 +4532,10 @@ class ModelTrainer:
                         # Check if target transformation requires bias correction
                         target_transform = feature_engineer.target_transformation
                         if target_transform.method in ["log1p", "yeo-johnson"]:
-                            # FIX: BiasCorrection.calculate_from_model() does NOT write
+                            # BiasCorrection.calculate_from_model() does NOT write
                             # attributes onto feature_engineer (see its docstring: "Does NOT
                             # modify feature_engineer"). Those _bias_var_* attributes are only
-                            # written by the BUG-D FIX block in main() AFTER all models finish.
+                            # written by the block in main() AFTER all models finish.
                             # Checking feature_engineer here therefore always fell into the
                             # final else-branch and raised RuntimeError even when bias
                             # correction was computed successfully.
@@ -4748,7 +4543,7 @@ class ModelTrainer:
                             # The correct source is the BiasCorrection instance that
                             # train_single_model() already stored in result["bias_correction"].
                             if bias_correction is None:
-                                # FIX-2 (v7.4.4): bias_correction=None is the CORRECT and
+                                # (v7.4.4): bias_correction=None is the CORRECT and
                                 # expected return value for quantile models (LightGBM, XGBoost,
                                 # GradientBoosting, QuantileRegressor). The quantile guard in
                                 # BiasCorrection.calculate_from_model() intentionally returns None
@@ -4780,18 +4575,14 @@ class ModelTrainer:
                             bias_variance = bias_correction.overall_variance
 
                             if bias_correction.is_2tier:
-                                logger.info(
-                                    "✅ 2-tier stratified bias correction detected"
-                                )
+                                logger.info("✅ 2-tier stratified bias correction detected")
                                 logger.info(
                                     f"   Low variance:  {bias_correction.var_low:.6f}\n"
                                     f"   High variance: {bias_correction.var_high:.6f}\n"
                                     f"   Threshold P75: ${bias_correction.threshold_low:.0f}"
                                 )
                             else:
-                                logger.info(
-                                    "✅ 3-tier stratified bias correction detected"
-                                )
+                                logger.info("✅ 3-tier stratified bias correction detected")
                                 logger.info(
                                     f"   Low variance:  {bias_correction.var_low:.6f}\n"
                                     f"   Mid variance:  {bias_correction.var_mid:.6f}\n"
@@ -4870,16 +4661,14 @@ class ModelTrainer:
         # model's BiasCorrection — guaranteeing the JSON and the model artifact
         # are always from the same training pass and var_high values match.
         if successful:
-            # ── B3 FIX (v7.5.4): use pricing model's BC when TMA is enabled ──────
+            # ── (v7.5.4): use pricing model's BC when TMA is enabled ──────
             # Previous: selected RMSE-best model (e.g. random_forest) → BC written
             # from random_forest while deployed model is xgboost_median. BC factors
             # differed (var_low=-0.210721 vs -0.207881) creating a silent mismatch.
             # The BiasCorrection consistency check at inference catches this, but the
             # root cause was here — using the wrong model's BC to write the JSON.
-            # Fix: when two_model_architecture is enabled, always use pricing_model's BC.
-            _tma_cfg_bc = self.raw_config.get("training", {}).get(
-                "two_model_architecture", {}
-            )
+            # when two_model_architecture is enabled, always use pricing_model's BC.
+            _tma_cfg_bc = self.raw_config.get("training", {}).get("two_model_architecture", {})
             _tma_enabled_bc = _tma_cfg_bc.get("enabled", False)
             _pricing_model_bc = _tma_cfg_bc.get("pricing_model", "xgboost_median")
 
@@ -4930,8 +4719,7 @@ class ModelTrainer:
                         f"JSON={getattr(_bc_reloaded, _a):.10f}"
                         for _a in ("var_low", "var_high")
                         if getattr(_best_bc, _a, None) is not None
-                        and abs(getattr(_best_bc, _a) - getattr(_bc_reloaded, _a))
-                        > _TOLERANCE
+                        and abs(getattr(_best_bc, _a) - getattr(_bc_reloaded, _a)) > _TOLERANCE
                     ]
 
                     if _mismatches:
@@ -4947,7 +4735,7 @@ class ModelTrainer:
                             f"   Round-trip validated ✅"
                         )
 
-                    # ── BUG-D FIX: re-save preprocessor with BEST model's bias correction ──
+                    # ── re-save preprocessor with BEST model's bias correction ──
                     # The training loop saves the preprocessor after the FIRST successful
                     # model, so feature_engineer._bias_var_* on disk reflects the first
                     # model, not necessarily the best one.  Re-apply the best model's
@@ -4966,9 +4754,7 @@ class ModelTrainer:
                                 _fe._log_residual_variance = (
                                     _best_bc.overall_variance
                                     if _best_bc.overall_variance is not None
-                                    else float(
-                                        np.var([_best_bc.var_low, _best_bc.var_high])
-                                    )
+                                    else float(np.var([_best_bc.var_low, _best_bc.var_high]))
                                 )
                                 for _attr in (
                                     "_bias_var_mid",
@@ -5023,15 +4809,13 @@ class ModelTrainer:
                     f"⚠️  No BiasCorrection found for best model '{_best_for_bc}' — "
                     "bias_correction.json not written."
                 )
-                # FIX-3B: When a successful quantile model produces _best_bc=None,
+                # When a successful quantile model produces _best_bc=None,
                 # any bias_correction.json left over from a PRIOR non-quantile run
                 # must be renamed to .stale so predict.py cannot pick it up.
-                # (The original FIX-3 block below only fires when successful={},
+                # (The original block below only fires when successful={},
                 # which never happens in a normal all-quantile run.)
                 if _prep_path_for_bc is not None:
-                    _stale_path_b = (
-                        Path(_prep_path_for_bc).parent / "bias_correction.json"
-                    )
+                    _stale_path_b = Path(_prep_path_for_bc).parent / "bias_correction.json"
                     if _stale_path_b.exists():
                         _stale_dest_b = _stale_path_b.with_suffix(".json.stale")
                         try:
@@ -5052,9 +4836,9 @@ class ModelTrainer:
                                 f"bias correction from a previous training run."
                             )
 
-        # ── FIX-3 (v7.4.4): Stale bias_correction.json cleanup ──────────────────
+        # ── (v7.4.4): Stale bias_correction.json cleanup ──────────────────
         # Runs when successful={} — covers the case where all models fail.
-        # FIX-3B (above) covers the normal case: successful model, _best_bc=None.
+        # (above) covers the normal case: successful model, _best_bc=None.
         #
         # The old stale-rename logic was gated inside 'if successful: / elif _best_bc is None:'.
         # When successful={} (every model fails the preprocessor-save RuntimeError in Bug 2),
@@ -5070,9 +4854,7 @@ class ModelTrainer:
             if _stale_path.exists():
                 _stale_dest = _stale_path.with_suffix(".json.stale")
                 try:
-                    _stale_path.replace(
-                        _stale_dest
-                    )  # replace() overwrites on Windows too
+                    _stale_path.replace(_stale_dest)  # replace() overwrites on Windows too
                     logger.warning(
                         f"⚠️  Renamed stale bias_correction.json → {_stale_dest.name}\n"
                         f"   Reason: all models in this run use quantile loss and have "
@@ -5098,9 +4880,7 @@ class ModelTrainer:
             # rather than by RMSE minimisation (which is dimensionally incoherent
             # across reg:squarederror and reg:quantileerror objectives).
             # Single-model path retains the original RMSE-min selection.
-            _tma_cfg_shap = self.raw_config.get("training", {}).get(
-                "two_model_architecture", {}
-            )
+            _tma_cfg_shap = self.raw_config.get("training", {}).get("two_model_architecture", {})
             _pricing_key_shap = _tma_cfg_shap.get("pricing_model", "xgboost_median")
             _risk_key_shap = _tma_cfg_shap.get("risk_model", "xgboost")
             if _tma_cfg_shap.get("enabled") and _risk_key_shap in successful:
@@ -5167,25 +4947,25 @@ class ModelTrainer:
                         if val_explanations.get("feature_importance") is not None
                         else None
                     ),
-                    "interval_coverage": val_metrics_with_shap.get(
-                        "interval_coverage_pct"
-                    ),
+                    "interval_coverage": val_metrics_with_shap.get("interval_coverage_pct"),
                     "interval_width": val_metrics_with_shap.get("interval_avg_width"),
                     "plots": val_explanations.get("plots", {}),
                 }
 
-                # ── Fix 3: log post-SHAP metrics by reopening the best run ──
+                # ── log post-SHAP metrics by reopening the best run ──
                 # Phase 2 updated val_metrics_with_shap with SHAP-derived fields.
                 # Reopen the closed run by ID and append with "shap_" prefix.
                 try:
                     _best_run_id = results[best_name].get("mlflow_run_id")
                     if self.mlflow.enabled and _best_run_id:
-                        _safe_f = lambda v: (
-                            float(v)
-                            if isinstance(v, (int, float, np.number))
-                            and np.isfinite(float(v))
-                            else None
-                        )
+
+                        def _safe_f(v):
+                            return (
+                                float(v)
+                                if isinstance(v, int | float | np.number) and np.isfinite(float(v))
+                                else None
+                            )
+
                         _shap_payload: dict[str, float] = {}
                         for _k in (
                             "original_rmse",
@@ -5199,19 +4979,17 @@ class ModelTrainer:
                                 _shap_payload[f"shap_{_k}"] = _v
 
                         if _shap_payload:
-                            with self.mlflow._mlflow.start_run(
+                            with self.mlflow._mlflow.start_run(  # type: ignore[union-attr]
                                 run_id=_best_run_id,
                                 nested=False,
                             ):
-                                self.mlflow._mlflow.log_metrics(_shap_payload)
+                                self.mlflow._mlflow.log_metrics(_shap_payload)  # type: ignore[union-attr]
                             logger.info(
                                 f"  MLflow: appended {len(_shap_payload)} post-SHAP "
                                 f"metrics to run {_best_run_id[:8]}..."
                             )
                 except Exception as _shap_mlflow_err:
-                    logger.warning(
-                        f"MLflow post-SHAP logging failed: {_shap_mlflow_err}"
-                    )
+                    logger.warning(f"MLflow post-SHAP logging failed: {_shap_mlflow_err}")
                 # ─────────────────────────────────────────────────────────────
 
                 # ── P1-E: SHAP feature importance as CSV artifact ─────────────
@@ -5224,16 +5002,10 @@ class ModelTrainer:
                         and self.mlflow.enabled
                         and _best_run_shap
                     ):
-                        _fi_path = (
-                            self.config.reports_dir / f"shap_importance_{best_name}.csv"
-                        )
+                        _fi_path = self.config.reports_dir / f"shap_importance_{best_name}.csv"
                         _shap_fi.to_csv(_fi_path, index=False)
-                        with self.mlflow._mlflow.start_run(
-                            run_id=_best_run_shap, nested=False
-                        ):
-                            self.mlflow._mlflow.log_artifact(
-                                str(_fi_path), artifact_path="shap"
-                            )
+                        with self.mlflow._mlflow.start_run(run_id=_best_run_shap, nested=False):  # type: ignore[union-attr]
+                            self.mlflow._mlflow.log_artifact(str(_fi_path), artifact_path="shap")  # type: ignore[union-attr]
                         logger.info(
                             f"  MLflow: SHAP importance CSV attached "
                             f"({len(_shap_fi)} features, run {_best_run_shap[:8]}...)"
@@ -5257,9 +5029,7 @@ class ModelTrainer:
                             f"      Avg Width: ${avg_width:,.0f}"
                         )
                     else:
-                        logger.info(
-                            "   Confidence Intervals: Available (metrics incomplete)"
-                        )
+                        logger.info("   Confidence Intervals: Available (metrics incomplete)")
 
                 # Log feature importance if available
                 feature_importance = val_explanations.get("feature_importance")
@@ -5271,7 +5041,7 @@ class ModelTrainer:
                         importance = row.get("importance", 0.0)
                         logger.info(f"      {idx+1}. {feature_name}: {importance:.4f}")
                 else:
-                    # FIX-5: Previously fired "Feature importance: Not available" even
+                    # Previously fired "Feature importance: Not available" even
                     # when Advanced Diagnostics below was about to log tree FI — a
                     # confusing contradiction. Now fall back to tree-based split-gain
                     # importances and label the source explicitly.
@@ -5288,9 +5058,7 @@ class ModelTrainer:
                     except Exception:
                         pass
                     if _tree_fi is not None and len(_tree_fi) > 0:
-                        logger.info(
-                            "   Top 5 features (tree split-gain; SHAP not yet computed):"
-                        )
+                        logger.info("   Top 5 features (tree split-gain; SHAP not yet computed):")
                         for feat, imp in _tree_fi.items():
                             logger.info(f"      {feat}: {imp:.4f}")
                         logger.info(
@@ -5305,9 +5073,7 @@ class ModelTrainer:
                 logger.info("")
 
             except Exception as e:
-                logger.error(
-                    f"⚠️ SHAP analysis failed for best model: {e}", exc_info=True
-                )
+                logger.error(f"⚠️ SHAP analysis failed for best model: {e}", exc_info=True)
                 logger.warning("Continuing without explainability for best model")
 
                 # Ensure explainability field exists even on failure
@@ -5346,17 +5112,13 @@ class ModelTrainer:
                     r2 = metrics.get("original_r2") or metrics.get("r2")
 
                     # Safe formatting for potentially None values
-                    rmse_str = (
-                        f"${rmse:12,.2f}" if rmse is not None else "N/A".rjust(14)
-                    )
+                    rmse_str = f"${rmse:12,.2f}" if rmse is not None else "N/A".rjust(14)
                     r2_str = f"{r2:6.4f}" if r2 is not None else "N/A".rjust(6)
 
                     explainable = result.get("explainability", {}).get("enabled", False)
                     shap_marker = " 🔍 [SHAP]" if explainable else ""
 
-                    logger.info(
-                        f"  {name:25s} | RMSE: {rmse_str} | R²: {r2_str}{shap_marker}"
-                    )
+                    logger.info(f"  {name:25s} | RMSE: {rmse_str} | R²: {r2_str}{shap_marker}")
 
             logger.info("-" * 80)
         else:
@@ -5433,9 +5195,7 @@ class ModelTrainer:
                 logger.info("Transforming test data (first evaluation)...")
 
                 # Transform features
-                X_test = feature_engineer.transform_pipeline(
-                    X_test_raw, remove_outliers=False
-                )
+                X_test = feature_engineer.transform_pipeline(X_test_raw, remove_outliers=False)
 
                 # Transform target
                 y_test_transformed = feature_engineer.transform_target(
@@ -5446,9 +5206,7 @@ class ModelTrainer:
 
                 # Store original target for metrics calculation
                 y_test_original = (
-                    y_test_raw.values
-                    if hasattr(y_test_raw, "values")
-                    else np.array(y_test_raw)
+                    y_test_raw.values if hasattr(y_test_raw, "values") else np.array(y_test_raw)
                 )
 
                 # Validate transformation quality
@@ -5496,13 +5254,13 @@ class ModelTrainer:
             )
 
             # 🔒 SAFETY CHECK: Ensure bias correction exists (non-quantile models only)
-            # FIX-1: The original guard raised unconditionally when _log_residual_variance
+            # The original guard raised unconditionally when _log_residual_variance
             # was absent. For quantile objectives (reg:quantileerror, quantile, QuantileRegressor),
             # BiasCorrection.calculate_from_model() intentionally returns None and never sets
             # _log_residual_variance — this is by design, not an error. The guard must
             # distinguish "missing by accident" from "skipped by design".
             #
-            # FIX-XGB-2X (evaluate_test): In XGBoost 2.x the sklearn wrapper does NOT store
+            # XGB-2X (evaluate_test): In XGBoost 2.x the sklearn wrapper does NOT store
             # the objective as a readable Python attribute after joblib round-trip.
             # `getattr(model, "objective", "")` returns "" or "reg:squarederror" (the
             # internal default), regardless of what was passed at construction time.
@@ -5523,9 +5281,7 @@ class ModelTrainer:
                 # Path 1: get_xgb_params() — booster-level, most reliable after joblib load
                 if not _obj_str and _mt == "XGBRegressor":
                     try:
-                        _obj_str = str(
-                            model.get_xgb_params().get("objective", "")
-                        ).lower()
+                        _obj_str = str(model.get_xgb_params().get("objective", "")).lower()
                     except Exception:
                         pass
 
@@ -5567,9 +5323,7 @@ class ModelTrainer:
                                 hasattr(model, "booster_")
                                 and "quantile"
                                 in str(
-                                    getattr(model.booster_, "params", {}).get(
-                                        "objective", ""
-                                    )
+                                    getattr(model.booster_, "params", {}).get("objective", "")
                                 ).lower()
                             )
                         )
@@ -5665,7 +5419,7 @@ class ModelTrainer:
                 avg_width = metrics.get("interval_avg_width")
 
                 if coverage is not None and avg_width is not None:
-                    # v7.5.2 FIX: was hardcoded to 95%; now config-driven.
+                    # was hardcoded to 95%; now config-driven.
                     _ci_target_pct = self.explainability_config.confidence_level * 100
                     _ci_tol_2 = _ci_target_pct * 0.02
                     _ci_tol_5 = _ci_target_pct * 0.05
@@ -5676,17 +5430,9 @@ class ModelTrainer:
                     )
 
                     # Coverage quality assessment — bands relative to actual target
-                    if (
-                        (_ci_target_pct - _ci_tol_2)
-                        <= coverage
-                        <= (_ci_target_pct + _ci_tol_2)
-                    ):
+                    if (_ci_target_pct - _ci_tol_2) <= coverage <= (_ci_target_pct + _ci_tol_2):
                         logger.info("      ✅ Well-calibrated (within ±2% of target)")
-                    elif (
-                        (_ci_target_pct - _ci_tol_5)
-                        <= coverage
-                        <= (_ci_target_pct + _ci_tol_5)
-                    ):
+                    elif (_ci_target_pct - _ci_tol_5) <= coverage <= (_ci_target_pct + _ci_tol_5):
                         logger.info("      ⚠️  Acceptable (within ±5% of target)")
                     elif coverage < _ci_target_pct - _ci_tol_5:
                         logger.warning(
@@ -5730,9 +5476,7 @@ class ModelTrainer:
                 "prediction_stats": pred_stats,
                 # Explainability results
                 "explainability": {
-                    "confidence_intervals": test_explanations.get(
-                        "confidence_intervals"
-                    ),
+                    "confidence_intervals": test_explanations.get("confidence_intervals"),
                     "feature_importance": test_explanations.get("feature_importance"),
                     "shap_values": test_explanations.get("shap_values"),
                     "plots": test_explanations.get("plots", {}),
@@ -5773,7 +5517,7 @@ class ModelTrainer:
 
         # Estimate memory usage
         memory_bytes = 0
-        for key, value in cache.items():
+        for _key, value in cache.items():
             if "X_test" in value:
                 memory_bytes += value["X_test"].memory_usage(deep=True).sum()
             if "y_test_transformed" in value:
@@ -5801,7 +5545,7 @@ class ModelTrainer:
 # INLINE PATCHES v7.5.0  — all remediation logic embedded, no new files needed
 # ============================================================================
 
-# ── Patch 01: Data Contamination Fix (Gate G2) ───────────────────────────────
+# ── Patch 01: Data Contamination (Gate G2) ───────────────────────────────
 
 # ============================================================================
 # 1. SPLIT DISJOINTNESS ASSERTION
@@ -5872,7 +5616,7 @@ def assert_splits_disjoint(data: dict[str, Any], label: str = "pipeline") -> Non
             f"❌ [{label}] DATA LEAKAGE DETECTED — split integrity violated:\n"
             + "\n".join(errors)
             + f"\n\n  Split sizes: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}"
-            + f"\n  ACTION: Check _split_data() random_state and val_size config."
+            + "\n  ACTION: Check _split_data() random_state and val_size config."
         )
 
     logger.info(
@@ -5977,14 +5721,14 @@ class DataIsolationGuard:
         logger.debug(f"DataIsolationGuard: test-set access locked ({self._forbidden})")
         return _GuardedDict(self._data, self._forbidden)
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> Literal[False]:
         logger.debug("DataIsolationGuard: test-set access unlocked")
         return False  # Do not suppress exceptions
 
 
 # ============================================================================
-# 3. REPLACEMENT FOR ISSUE-5 FIX BLOCK
-#    Drop this in place of the ISSUE-5 FIX try/except in train.py.
+# 3. REPLACEMENT BLOCK
+#    Drop this in place of the try/except in train.py.
 #
 #    The ORIGINAL block (lines ~5077–5147) called:
 #        y_full_val_pred_cal = calibrated_model.predict(X_val)
@@ -6000,15 +5744,15 @@ class DataIsolationGuard:
 #    ~160 samples). No upgrade. The CI will be slightly wider but HONEST.
 # ============================================================================
 
-# ─── Paste this block into train.py in place of the ISSUE-5 FIX ─────────────
+# ─── Paste this block into train.py ─────────────
 ISSUE_5_REPLACEMENT_COMMENT = """
-# ── ISSUE-5 FIX REMOVED (patch_01_contamination.py) ─────────────────────────
-# The previous ISSUE-5 FIX called calibrated_model.predict(X_val) to upgrade
+# ── REMOVED (patch_01_contamination.py) ─────────────────────────
+# The previous FIX called calibrated_model.predict(X_val) to upgrade
 # conformal calibration from 160→268 samples.  This caused circular coverage:
 # the conformal quantile was fitted on 268 val residuals and then coverage was
 # measured on test data drawn from the same 268-sample population.
 #
-# FIX: conformal calibration remains on X_calib only (~160 samples).
+# conformal calibration remains on X_calib only (~160 samples).
 # The CI will be ~10–15% wider but the coverage estimate is unbiased.
 #
 # For narrower honest CIs: see patch_04_mapie_cqr.py (MAPIE CQR — projected
@@ -6042,7 +5786,6 @@ assert_splits_disjoint(data)                      # ← ADD THIS
 # STEP B: Wrap the calibration block in DataIsolationGuard (NEW)
 with DataIsolationGuard(data):
     # ... existing calibration code (X_calib / X_holdout) ...
-    # ... ISSUE-5 FIX block REMOVED here ...
     pass
 
 # STEP C: Test evaluation runs OUTSIDE the guard — unchanged
@@ -6144,14 +5887,14 @@ class TwoModelArchitecture:
         Base premium prediction for customer quotes.
         Uses median (squarederror) model → overpricing rate ≤ 55%.
         """
-        return self.pricing_model.predict(X)
+        return np.asarray(self.pricing_model.predict(X))
 
     def predict_risk_loading(self, X: pd.DataFrame) -> np.ndarray:
         """
         Upper-quantile prediction for reinsurance / tail reserve.
         Uses α=0.65 model → ~65th percentile of charge distribution.
         """
-        return self.risk_model.predict(X)
+        return np.asarray(self.risk_model.predict(X))
 
     def predict_with_loading(
         self,
@@ -6201,10 +5944,8 @@ def check_objective_metric_alignment(
     model_name: str,
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    config: dict | None = None,  # FIX-4b: pass config for objective detection
-    quantile_alpha_override: (
-        float | None
-    ) = None,  # v7.5.2: bypass XGBoost 3.x introspection
+    config: dict | None = None,
+    quantile_alpha_override: (float | None) = None,  # v7.5.2: bypass XGBoost 3.x introspection
 ) -> dict[str, Any]:
     """
     Gate G1/G7: Verify the evaluation metric matches the training objective.
@@ -6212,7 +5953,7 @@ def check_objective_metric_alignment(
     For reg:squarederror  -> expects RMSE-based reporting; G7 threshold <= 55%
     For reg:quantileerror -> expects pinball-based reporting; G7 threshold ~ alpha +/- 10pp
 
-    FIX-4: config param added so _detect_xgb_objective can use quantile_alpha
+    config param added so _detect_xgb_objective can use quantile_alpha
     presence and config.yaml as fallbacks when XGBoost 2.x returns the default
     'reg:squarederror' string even for quantile-trained models.
 
@@ -6221,7 +5962,7 @@ def check_objective_metric_alignment(
     dict after fitting, so introspection always returns the 0.65 fallback.
     Pass the value directly from config at all call sites.
     """
-    # FIX-4: pass config + model_name to enable all fallback detection paths
+    # pass config + model_name to enable all fallback detection paths
     objective = _detect_xgb_objective(model, config=config, model_name=model_name)
     is_quantile = "quantile" in objective.lower()
 
@@ -6248,7 +5989,7 @@ def check_objective_metric_alignment(
 
         # G1 check: is this model being evaluated correctly?
         results["g1_pass"] = True  # quantile model with pinball is aligned
-        # BUG-8 FIX (v7.5.0): Use symmetric ±10pp tolerance around alpha.
+        # (v7.5.0): Use symmetric ±10pp tolerance around alpha.
         # The old one-sided check (rate <= alpha + 0.10) only caught overpricing
         # that exceeded alpha by more than 10pp.  A quantile model at alpha=0.65
         # must target 65% overpricing — being systematically too LOW (e.g. 45%)
@@ -6274,19 +6015,13 @@ def check_objective_metric_alignment(
         )
         results["g1_pass"] = True  # squarederror model with RMSE is aligned
         results["g7_pass"] = overpricing_rate <= _g7_threshold
-        results["g7_threshold"] = (
-            _g7_threshold  # surface in results for downstream logging
-        )
+        results["g7_threshold"] = _g7_threshold  # surface in results for downstream logging
         results["g7_message"] = (
             f"Overpricing rate {overpricing_rate:.1%}. "
             f"{'✅' if results['g7_pass'] else '❌'} "
             f"{'<=' if results['g7_pass'] else '>'} {_g7_threshold:.0%} threshold"
             f"{' (from config)' if config else ' (default)'}."
-            + (
-                ""
-                if results["g7_pass"]
-                else " Systematic upward bias in squarederror model."
-            )
+            + ("" if results["g7_pass"] else " Systematic upward bias in squarederror model.")
         )
 
     gate_str = "✅ PASS" if results["g1_pass"] and results["g7_pass"] else "❌ FAIL"
@@ -6299,13 +6034,11 @@ def check_objective_metric_alignment(
     return results
 
 
-def _detect_xgb_objective(
-    model: Any, config: dict | None = None, model_name: str = ""
-) -> str:
+def _detect_xgb_objective(model: Any, config: dict | None = None, model_name: str = "") -> str:
     """
     Reliably detect XGBoost objective after joblib round-trip.
 
-    FIX-4: XGBoost 2.x may store reg:quantileerror as a C++ callable, causing
+    XGBoost 2.x may store reg:quantileerror as a C++ callable, causing
     get_xgb_params() to return the default string 'reg:squarederror' even for
     quantile models. Priority chain (most to least reliable):
       1. get_xgb_params()/get_params() — fast path when string is already correct
@@ -6315,9 +6048,7 @@ def _detect_xgb_objective(
     """
     # Unwrap CalibratedModel first
     if hasattr(model, "base_model"):
-        return _detect_xgb_objective(
-            model.base_model, config=config, model_name=model_name
-        )
+        return _detect_xgb_objective(model.base_model, config=config, model_name=model_name)
 
     # 1. Fast path: objective string already contains 'quantile'
     for _getter in ("get_xgb_params", "get_params"):
@@ -6332,10 +6063,7 @@ def _detect_xgb_objective(
     # 2. Belt-and-suspenders: quantile_alpha presence -> quantile model (XGBoost 2.x)
     try:
         _has_qa = (
-            (
-                hasattr(model, "get_params")
-                and model.get_params().get("quantile_alpha") is not None
-            )
+            (hasattr(model, "get_params") and model.get_params().get("quantile_alpha") is not None)
             or getattr(model, "quantile_alpha", None) is not None
             or (
                 isinstance(getattr(model, "kwargs", None), dict)
@@ -6350,9 +6078,7 @@ def _detect_xgb_objective(
     # 3. config.yaml — version-independent fallback
     if config is not None and model_name:
         _base = model_name.replace("_calibrated", "")
-        _cfg_obj = str(
-            config.get("models", {}).get(_base, {}).get("objective", "")
-        ).lower()
+        _cfg_obj = str(config.get("models", {}).get(_base, {}).get("objective", "")).lower()
         if _cfg_obj:
             return _cfg_obj
 
@@ -6370,7 +6096,7 @@ def _detect_quantile_alpha(model: Any, alpha_override: float | None = None) -> f
     """
     Extract quantile_alpha from an XGBoost model.
 
-    v7.5.2 FIX: XGBoost 3.x does not preserve quantile_alpha in get_xgb_params()
+    XGBoost 3.x does not preserve quantile_alpha in get_xgb_params()
     or get_params() after fitting. Pass alpha_override (read from config at the
     call site) to bypass introspection entirely when the value is known.
     """
@@ -6456,9 +6182,7 @@ def train_two_model_architecture(
     finally:
         trainer.raw_config = original_config
 
-    pricing_model_name = max(
-        pricing_results, key=lambda k: pricing_results[k].get("val_r2", 0)
-    )
+    pricing_model_name = max(pricing_results, key=lambda k: pricing_results[k].get("val_r2", 0))
     pricing_model = pricing_results[pricing_model_name]["model"]
     pricing_bias_correction = pricing_results[pricing_model_name].get("bias_correction")
 
@@ -6476,9 +6200,7 @@ def train_two_model_architecture(
     # v7.5.2: define _risk_alpha here so the PHASE 2 header and all downstream
     # G7 gate calls read from config rather than the XGBoost 3.x introspection
     # fallback (which always returns 0.65 regardless of training alpha).
-    _risk_alpha = (
-        config.get("models", {}).get("xgboost", {}).get("quantile_alpha", 0.30)
-    )
+    _risk_alpha = config.get("models", {}).get("xgboost", {}).get("quantile_alpha", 0.30)
     logger.info("\n" + "=" * 80)
     logger.info(f"PHASE 2: Risk Model (reg:quantileerror, α={_risk_alpha:.2f})")
     logger.info("=" * 80)
@@ -6487,28 +6209,24 @@ def train_two_model_architecture(
     # Use original config (already in trainer.raw_config from main())
     risk_results = trainer.train_all_models(data)
 
-    # FIX: Filter to successful models only BEFORE selection.
+    # Filter to successful models only BEFORE selection.
     # train_all_models() returns all results including status="failed"/"skipped" entries
     # that have no pinball_loss key at all. Non-quantile successful models store
     # pinball_loss=None explicitly, so .get("pinball_loss", float("inf")) correctly
     # returns None (key is present) rather than inf — causing min() to crash with
     # TypeError when comparing None < float.
-    successful_risk = {
-        k: v for k, v in risk_results.items() if v.get("status") == "success"
-    }
+    successful_risk = {k: v for k, v in risk_results.items() if v.get("status") == "success"}
     if not successful_risk:
         raise RuntimeError(
             f"No risk models trained successfully. "
             f"Statuses: { {k: v.get('status') for k, v in risk_results.items()} }"
         )
 
-    # ML-06 FIX: Risk model is selected by pinball_loss (lower is better), not val_r2.
+    # Risk model is selected by pinball_loss (lower is better), not val_r2.
     # R² is a symmetric metric with no relationship to quantile calibration quality.
     # Fall back to val_rmse only if pinball_loss is absent/None for all candidates.
     # IMPORTANT: check must come BEFORE min() to avoid the None < float TypeError.
-    has_pinball = any(
-        successful_risk[k].get("pinball_loss") is not None for k in successful_risk
-    )
+    has_pinball = any(successful_risk[k].get("pinball_loss") is not None for k in successful_risk)
     if has_pinball:
         risk_model_name = min(
             successful_risk,
@@ -6523,9 +6241,7 @@ def train_two_model_architecture(
             "⚠️  ML-06: pinball_loss absent from all risk_results — falling back to val_r2 "
             "for risk model selection. Re-train to populate pinball_loss."
         )
-        risk_model_name = max(
-            successful_risk, key=lambda k: successful_risk[k].get("val_r2", 0)
-        )
+        risk_model_name = max(successful_risk, key=lambda k: successful_risk[k].get("val_r2", 0))
     risk_model = successful_risk[risk_model_name]["model"]
     risk_bias_correction = successful_risk[risk_model_name].get("bias_correction")
 
@@ -6552,7 +6268,7 @@ def train_two_model_architecture(
         context="gate_check_pricing",
     )
 
-    # Fix 1 — apply BC before training-time G7 gate (lines 5681–5683)
+    # apply BC before training-time G7 gate (lines 5681–5683)
     # Without this, check_objective_metric_alignment() evaluates the G7 overpricing
     # rate against raw (uncorrected) predictions.  The BC shifts predictions toward
     # their true expected value, so the gate must see the corrected signal — the same
@@ -6565,7 +6281,7 @@ def train_two_model_architecture(
         model_name="xgboost_median",
         y_true=y_val_orig,
         y_pred=y_pred_pricing_orig,
-        config=config,  # FIX-4c: config fallback for objective detection
+        config=config,
     )
 
     if not gate_results["g7_pass"]:
@@ -6577,7 +6293,7 @@ def train_two_model_architecture(
             "   Run Optuna re-optimization with squarederror objective."
         )
 
-    # FIX-9: also evaluate G7 for the risk model.
+    # also evaluate G7 for the risk model.
     # Previously only the pricing model was checked here — the risk model's
     # G7 failure (xgboost 78.7% > 55%) was silently dropped and never surfaced
     # in the deployment error summary, masking a second blocker.
@@ -6598,9 +6314,7 @@ def train_two_model_architecture(
         quantile_alpha_override=_risk_alpha,
     )
     if not risk_gate_results["g7_pass"]:
-        _risk_thresh_pct = (
-            f"{risk_gate_results.get('g7_threshold', G7_MAX_OVERPRICING_RATE):.0%}"
-        )
+        _risk_thresh_pct = f"{risk_gate_results.get('g7_threshold', G7_MAX_OVERPRICING_RATE):.0%}"
         logger.warning(
             f"⚠️  G7 RISK MODEL FAIL: {risk_model_name} overpricing rate "
             f"{risk_gate_results['overpricing_rate']:.1%} > {_risk_thresh_pct}.\n"
@@ -6619,7 +6333,7 @@ def train_two_model_architecture(
         "risk_bias_correction": risk_bias_correction,
         "risk_results": risk_results,
         "g1_g7_gate": gate_results,
-        "g7_risk_gate": risk_gate_results,  # FIX-9: surface risk model G7 for reporting
+        "g7_risk_gate": risk_gate_results,
         "architecture": TwoModelArchitecture(
             pricing_model=pricing_model,
             risk_model=risk_model,
@@ -6638,19 +6352,19 @@ def _patch_config_for_squarederror(config: dict[str, Any]) -> dict[str, Any]:
 
     patched = copy.deepcopy(config)
 
-    # ── BUG-1 FIX (v7.5.0): Use 'xgboost_median' as the model key ───────────
+    # ── (v7.5.0): Use 'xgboost_median' as the model key ───────────
     # Previously this set models=["xgboost"] and overwrote models.xgboost with
     # squarederror params.  Phase 2 then trained "xgboost" again (quantile) and
     # saved to the SAME xgboost.joblib path, silently discarding the pricing model.
     #
-    # Fix: register the pricing model under the distinct key "xgboost_median" so:
+    # register the pricing model under the distinct key "xgboost_median" so:
     #   Phase 1 → xgboost_median.joblib  (reg:squarederror, pricing)
     #   Phase 2 → xgboost.joblib         (reg:quantileerror α=0.65, risk)
     #
     # ModelManager._model_factories["xgboost_median"] = xgb.XGBRegressor is
-    # registered in models.py (same fix set).
+    # registered in models.py (same set).
     # OptunaOptimizer._is_xgb_quantile_model("xgboost_median") returns False
-    # (objective="reg:squarederror" has no "quantile") → RMSE scoring is used. ✅
+    # (objective="reg:squarederror" has no "quantile") → RMSE scoring is used.
 
     # Train ONLY xgboost_median (squarederror objective)
     patched.setdefault("model", {})["models"] = ["xgboost_median"]
@@ -6679,11 +6393,10 @@ def _patch_config_for_squarederror(config: dict[str, Any]) -> dict[str, Any]:
 
 # ── Patch 03: Git Provenance + Artifact Integrity (Gates G4, G5, G9) ─────────
 # New imports not present at module top:
-import subprocess
-import sys
-from dataclasses import asdict  # dataclass already imported at module top
-from datetime import datetime, timezone
-
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from dataclasses import asdict  # dataclass already imported at module top  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 
 # ============================================================================
 # 1. GIT PROVENANCE CAPTURE
@@ -6769,9 +6482,9 @@ def capture_git_provenance(repo_root: Path | None = None) -> GitProvenance:
 
     # Dirty check
     status_out = _git("status", "--porcelain")
-    dirty_lines = [l for l in status_out.split("\n") if l.strip()] if status_out else []
+    dirty_lines = [ln for ln in status_out.split("\n") if ln.strip()] if status_out else []
     is_dirty = len(dirty_lines) > 0
-    dirty_files = [l.strip() for l in dirty_lines[:20]]  # cap at 20 for readability
+    dirty_files = [ln.strip() for ln in dirty_lines[:20]]  # cap at 20 for readability
 
     # CI run ID (GitHub Actions, Jenkins, CircleCI)
     ci_run_id = (
@@ -6789,7 +6502,7 @@ def capture_git_provenance(repo_root: Path | None = None) -> GitProvenance:
         tags=tags,
         is_dirty=is_dirty,
         dirty_files=dirty_files,
-        capture_timestamp=datetime.now(timezone.utc).isoformat(),
+        capture_timestamp=datetime.now(UTC).isoformat(),
         python_version=sys.version,
         platform_info=platform.platform(),
         ci_run_id=ci_run_id,
@@ -6840,8 +6553,7 @@ class ProvenanceGate:
             Dict with g4_pass, g9_pass, messages.
         """
         g4_pass = (
-            provenance.commit_hash not in ("unknown", "", None)
-            and len(provenance.commit_hash) >= 7
+            provenance.commit_hash not in ("unknown", "", None) and len(provenance.commit_hash) >= 7
         )
         g9_pass = g4_pass  # G9 (random_state) is handled in save_model; G4 enables it
 
@@ -6852,9 +6564,7 @@ class ProvenanceGate:
                 "Model cannot be deployed without a traceable commit."
             )
         if require_clean and provenance.is_dirty:
-            messages.append(
-                f"G4 FAIL (clean required): {len(provenance.dirty_files)} dirty files."
-            )
+            messages.append(f"G4 FAIL (clean required): {len(provenance.dirty_files)} dirty files.")
             g4_pass = False
 
         result = {
@@ -6866,9 +6576,7 @@ class ProvenanceGate:
         }
 
         if not g4_pass and raise_on_fail:
-            raise ValueError(
-                f"❌ Gate G4 FAILED:\n" + "\n".join(f"  • {m}" for m in messages)
-            )
+            raise ValueError("❌ Gate G4 FAILED:\n" + "\n".join(f"  • {m}" for m in messages))
 
         gate_str = "✅ PASS" if g4_pass else "❌ FAIL"
         logger.info(f"Gate G4 [{gate_str}]: {provenance}")
@@ -6938,7 +6646,7 @@ def always_write_bias_correction(
         is_2tier = getattr(bias_correction, "is_2tier", False)
         correction_type = "2-tier" if is_2tier else "3-tier"
 
-        # BUG-6 FIX (v7.5.0): Use BiasCorrection.to_dict() directly instead of
+        # (v7.5.0): Use BiasCorrection.to_dict() directly instead of
         # manually extracting attributes via wrong key names (tier1_threshold etc.
         # do not exist on BiasCorrection — those are from a stale design).
         # The old loop always produced params={} because none of the attributes
@@ -6955,7 +6663,7 @@ def always_write_bias_correction(
             correction_params=params,
             provenance=provenance.to_dict() if provenance else None,
             random_state=random_state,
-            training_timestamp=datetime.now(timezone.utc).isoformat(),
+            training_timestamp=datetime.now(UTC).isoformat(),
             pipeline_version=pipeline_version,
         )
     else:
@@ -6977,13 +6685,12 @@ def always_write_bias_correction(
             correction_params=None,
             provenance=provenance.to_dict() if provenance else None,
             random_state=random_state,
-            training_timestamp=datetime.now(timezone.utc).isoformat(),
+            training_timestamp=datetime.now(UTC).isoformat(),
             pipeline_version=pipeline_version,
         )
 
         logger.info(
-            f"ℹ️  Writing bias_correction.json stub (applied=False):\n"
-            f"   Reason: {reason}"
+            f"ℹ️  Writing bias_correction.json stub (applied=False):\n" f"   Reason: {reason}"
         )
 
     # ── Atomic write (temp → rename) ─────────────────────────────────────
@@ -6992,9 +6699,7 @@ def always_write_bias_correction(
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(artifact.to_dict(), f, indent=2, default=str)
         tmp_path.replace(out_path)
-        logger.info(
-            f"✅ bias_correction.json written: {out_path} (applied={artifact.applied})"
-        )
+        logger.info(f"✅ bias_correction.json written: {out_path} (applied={artifact.applied})")
     except Exception as e:
         logger.error(f"❌ Failed to write bias_correction.json: {e}")
         if tmp_path.exists():
@@ -7082,9 +6787,7 @@ class ArtifactManifest:
         gate_pass = len(missing) == 0
 
         if warnings:
-            logger.warning(
-                f"⚠️  Artifact metadata warnings (non-blocking):\n" + "\n".join(warnings)
-            )
+            logger.warning("⚠️  Artifact metadata warnings (non-blocking):\n" + "\n".join(warnings))
 
         if not gate_pass:
             msg = (
@@ -7104,9 +6807,7 @@ class ArtifactManifest:
         }
 
         if gate_pass:
-            logger.info(
-                f"✅ Artifact manifest valid ({len(present)} required fields present)"
-            )
+            logger.info(f"✅ Artifact manifest valid ({len(present)} required fields present)")
 
         return result
 
@@ -7150,7 +6851,7 @@ G6_MIN_COST_WEIGHTED_R2: float = 0.75
 # Overridden at runtime by config["training"]["deployment_gates"]["g7_max_overpricing_rate"].
 # Right-skewed insurance charges push mean > median, so a perfectly fitted MSE model
 # exceeds 50% overpricing by design.  0.62 is the empirical steady-state with 3-tier
-# BiasCorrection (BUG-6 FIX — raised from 0.55 in config.yaml v7.5.0).
+# BiasCorrection (raised from 0.55 in config.yaml v7.5.0).
 G7_MAX_OVERPRICING_RATE: float = 0.62
 
 # Cost tier weights for weighted R² (higher = more business impact)
@@ -7365,9 +7066,9 @@ class DeploymentGates:
 
         g6_pass = cw_r2 >= min_cost_weighted_r2
         critical_segments = breakdown[breakdown["r2"] < 0.0]["segment"].tolist()
-        warning_segments = breakdown[
-            (breakdown["r2"] >= 0.0) & (breakdown["r2"] < 0.5)
-        ]["segment"].tolist()
+        warning_segments = breakdown[(breakdown["r2"] >= 0.0) & (breakdown["r2"] < 0.5)][
+            "segment"
+        ].tolist()
 
         # ── v7.5.1 HARD VETO: R² < -1.0 blocks deployment unconditionally ──────
         # An aggregate G6 pass can mask a catastrophic per-segment failure.
@@ -7405,16 +7106,12 @@ class DeploymentGates:
             (breakdown["r2"] < -1.0) & (breakdown["n_samples"] < _MIN_N_FOR_R2_VETO)
         ]["segment"].tolist()
 
-        # ── v7.5.5 FIX: define bins/labels in check_g6 scope ────────────────
+        # ── define bins/labels in check_g6 scope ────────────────
         # Must match segment_r2_breakdown's defaults exactly.
         # Compute _tier_assign once; reuse across all per-segment loops below.
-        _g6_bins: list[float] = [
-            0.0, 5_000.0, 10_000.0, 14_000.0, HIGH_VALUE_THRESHOLD, np.inf
-        ]
+        _g6_bins: list[float] = [0.0, 5_000.0, 10_000.0, 14_000.0, HIGH_VALUE_THRESHOLD, np.inf]
         _g6_labels: list[str] = ["Low", "Mid", "High", "High+", "Very High"]
-        _tier_assign = pd.cut(
-            y_true, bins=_g6_bins, labels=_g6_labels, include_lowest=True
-        )
+        _tier_assign = pd.cut(y_true, bins=_g6_bins, labels=_g6_labels, include_lowest=True)
 
         # Partition veto candidates: narrow-band → advisory; wide-band → hard veto.
         # Pre-compute seg_std for each candidate to drive both partitioning and
@@ -7436,8 +7133,7 @@ class DeploymentGates:
 
         if _narrow_advisory:
             _nba_str = ", ".join(
-                f"{n} (seg_std=${s:,.0f}, RMSE=${r:,.0f})"
-                for n, s, r in _narrow_advisory
+                f"{n} (seg_std=${s:,.0f}, RMSE=${r:,.0f})" for n, s, r in _narrow_advisory
             )
             logger.warning(
                 f"⚠️  G6 NARROW-BAND ADVISORY (not a hard veto):\n"
@@ -7467,8 +7163,8 @@ class DeploymentGates:
                 f"   these policyholders and must not be deployed.\n"
                 f"   Per-segment diagnosis:\n"
                 + "".join(f"     • {d}\n" for d in _veto_detail_parts)
-                + f"   Fix: train FullSegmentSpecialist (Phase 3) to bring each\n"
-                f"   segment's RMSE below its within-segment std."
+                + "   Fix: train FullSegmentSpecialist (Phase 3) to bring each\n"
+                "   segment's RMSE below its within-segment std."
             )
 
         if advisory_segments:
@@ -7494,9 +7190,7 @@ class DeploymentGates:
             f"  Cost-Weighted R²: {cw_r2:.4f} (threshold: {min_cost_weighted_r2:.2f})\n"
         )
         logger.info("\n📊 PER-SEGMENT R² BREAKDOWN:")
-        logger.info(
-            f"  {'Segment':<12} {'N':<8} {'R²':>8} {'RMSE':>10} {'Overpricing':>12}"
-        )
+        logger.info(f"  {'Segment':<12} {'N':<8} {'R²':>8} {'RMSE':>10} {'Overpricing':>12}")
         logger.info(f"  {'-'*56}")
         for _, row in breakdown.iterrows():
             r2_str = f"{row['r2']:8.4f}" if not pd.isna(row["r2"]) else "     N/A"
@@ -7543,7 +7237,7 @@ class DeploymentGates:
 
 
 # ============================================================================
-# 3. HIGH-VALUE SPECIALIST MODEL SCAFFOLD (v7.5.0 long-term fix)
+# 3. HIGH-VALUE SPECIALIST MODEL SCAFFOLD (v7.5.0)
 # ============================================================================
 
 
@@ -7568,7 +7262,7 @@ class HighValueSpecialist:
 
     MIN_HIGH_VALUE_SAMPLES = 200
     TRANSITION_ZONE = (HIGH_VALUE_THRESHOLD, HIGH_VALUE_THRESHOLD + 5_000.0)
-    # FIX: Aligned with HighValueSegmentRouter.HIGH_VALUE_THRESHOLD in predict.py.
+    # Aligned with HighValueSegmentRouter.HIGH_VALUE_THRESHOLD in predict.py.
     # Previous value ($14,000) included the "High+" tier ($14K–$16.7K) in training.
     # At inference the router only activates at $16,701 (predicted value), so those
     # ~40 training samples represent a distribution the specialist rarely encounters.
@@ -7583,13 +7277,11 @@ class HighValueSpecialist:
         self,
         global_model: Any,
         specialist_model: Any | None = None,
-        threshold: float = None,
+        threshold: float | None = None,
     ):
         self.global_model = global_model
         self.specialist_model = specialist_model
-        self.threshold = (
-            threshold if threshold is not None else self.SPECIALIST_TRAIN_THRESHOLD
-        )
+        self.threshold = threshold if threshold is not None else self.SPECIALIST_TRAIN_THRESHOLD
         self._fitted = False
 
     @classmethod
@@ -7635,8 +7327,8 @@ class HighValueSpecialist:
         feasibility = self.check_feasibility(y_train)
         if not feasibility["feasible"]:
             logger.warning(
-                f"⚠️  HighValueSpecialist.fit(): insufficient samples. "
-                f"Specialist will be None — routing will use global model for all."
+                "⚠️  HighValueSpecialist.fit(): insufficient samples. "
+                "Specialist will be None — routing will use global model for all."
             )
             self._fitted = True
             return self
@@ -7657,7 +7349,7 @@ class HighValueSpecialist:
             #   - reg_lambda=2.0 is appropriate for 800 samples, too weak for 200
             #   - result: High R²=−2.10, specialist actively hurts vs base model
             #
-            # Fix: constrain complexity proportional to sample count.
+            # constrain complexity proportional to sample count.
             #   - max_depth=3 → up to 8 leaves → ~25 samples/leaf (stable)
             #   - reg_lambda=20.0 → strong L2 for small N (prevents leaf memorisation)
             #   - min_child_weight=10 → requires 10 samples minimum per leaf split
@@ -7689,9 +7381,7 @@ class HighValueSpecialist:
         )
         return self
 
-    def predict(
-        self, X: pd.DataFrame, base_predictions: np.ndarray | None = None
-    ) -> np.ndarray:
+    def predict(self, X: pd.DataFrame, base_predictions: np.ndarray | None = None) -> np.ndarray:
         """
         Blend global and specialist predictions with soft routing.
 
@@ -7715,7 +7405,7 @@ class HighValueSpecialist:
         blend = np.clip((base_predictions - lo) / (hi - lo), 0.0, 1.0)
         blended = (1 - blend) * base_predictions + blend * specialist_preds
 
-        return blended
+        return np.asarray(blended)
 
 
 # ============================================================================
@@ -7752,13 +7442,13 @@ class FullSegmentSpecialist:
 
     # Must exactly match the bins used by CostWeightedMetrics / G6
     TIERS: list[tuple[str, float, float]] = [
-        ("low",       0.0,                  5_000.0),
-        ("mid",       5_000.0,             10_000.0),
-        ("high_mid",  10_000.0,  HIGH_VALUE_THRESHOLD),   # $16,701
+        ("low", 0.0, 5_000.0),
+        ("mid", 5_000.0, 10_000.0),
+        ("high_mid", 10_000.0, HIGH_VALUE_THRESHOLD),  # $16,701
         ("very_high", HIGH_VALUE_THRESHOLD, float("inf")),
     ]
 
-    BLEND_WIDTH: float = 500.0   # $500 soft blend zone at each boundary
+    BLEND_WIDTH: float = 500.0  # $500 soft blend zone at each boundary
     MIN_SAMPLES_PER_TIER: int = 50  # skip training if fewer samples
 
     def __init__(self) -> None:
@@ -7774,7 +7464,7 @@ class FullSegmentSpecialist:
         y_train_original: np.ndarray,
         random_state: int = 42,
         gpu_config: dict | None = None,
-    ) -> "FullSegmentSpecialist":
+    ) -> FullSegmentSpecialist:
         """
         Train a specialist XGBRegressor for each tier.
 
@@ -7798,9 +7488,7 @@ class FullSegmentSpecialist:
         )
 
         for tier_name, lo, hi in self.TIERS:
-            mask = (
-                (y >= lo) & (y < hi) if hi < float("inf") else (y >= lo)
-            )
+            mask = (y >= lo) & (y < hi) if hi < float("inf") else (y >= lo)
             n_tier = int(mask.sum())
 
             if n_tier < self.MIN_SAMPLES_PER_TIER:
@@ -7820,10 +7508,10 @@ class FullSegmentSpecialist:
             # Stronger regularization for smaller segments to prevent
             # memorisation on <200 samples.  Derived empirically from
             # Run 1 (N≈200) and Run 2 (N≈15K) behaviour.
-            depth     = min(4, max(2, int(np.log2(n_tier / 20 + 1))))
-            reg_lam   = max(5.0, min(50.0, 2_000.0 / (n_tier + 1)))
-            min_cw    = max(5, n_tier // 40)
-            n_est     = min(500, max(200, n_tier // 50 * 50))
+            depth = min(4, max(2, int(np.log2(n_tier / 20 + 1))))
+            reg_lam = max(5.0, min(50.0, 2_000.0 / (n_tier + 1)))
+            min_cw = max(5, n_tier // 40)
+            n_est = min(500, max(200, n_tier // 50 * 50))
 
             try:
                 spec = xgb.XGBRegressor(
@@ -7842,8 +7530,7 @@ class FullSegmentSpecialist:
                 spec.fit(X_tier, y_tier)
             except Exception as _gpu_err:
                 logger.warning(
-                    f"   ⚠️  Tier '{tier_name}' GPU fit failed ({_gpu_err}). "
-                    "Retrying on CPU."
+                    f"   ⚠️  Tier '{tier_name}' GPU fit failed ({_gpu_err}). " "Retrying on CPU."
                 )
                 spec = xgb.XGBRegressor(
                     objective="reg:squarederror",
@@ -7881,9 +7568,7 @@ class FullSegmentSpecialist:
         )
         return self
 
-    def predict(
-        self, X, base_predictions: np.ndarray
-    ) -> np.ndarray:
+    def predict(self, X, base_predictions: np.ndarray) -> np.ndarray:
         """
         Route predictions to segment specialists with soft blending.
 
@@ -7936,8 +7621,8 @@ class FullSegmentSpecialist:
             # Lower boundary blend (ascending weight from 0 → 1 as we enter tier)
             lower_blend = (bp_sub >= blend_lo) & (bp_sub < lo)
             # Upper boundary blend (descending weight from 1 → 0 as we leave tier)
-            upper_blend = np.zeros(len(idx), dtype=bool) if is_inf else (
-                (bp_sub >= hi) & (bp_sub < blend_hi)
+            upper_blend = (
+                np.zeros(len(idx), dtype=bool) if is_inf else ((bp_sub >= hi) & (bp_sub < blend_hi))
             )
 
             # Pure interior: 100% specialist
@@ -7947,17 +7632,17 @@ class FullSegmentSpecialist:
             if lower_blend.any():
                 denom = lo - blend_lo
                 w = np.clip((bp_sub[lower_blend] - blend_lo) / max(denom, 1e-6), 0.0, 1.0)
-                y_pred[idx[lower_blend]] = (
-                    (1 - w) * base_predictions[idx[lower_blend]] + w * spec_preds[lower_blend]
-                )
+                y_pred[idx[lower_blend]] = (1 - w) * base_predictions[
+                    idx[lower_blend]
+                ] + w * spec_preds[lower_blend]
 
             # Upper blend: weight falls from 1 (at hi) to 0 (at blend_hi)
             if upper_blend.any():
                 denom = blend_hi - hi
                 w = np.clip(1.0 - (bp_sub[upper_blend] - hi) / max(denom, 1e-6), 0.0, 1.0)
-                y_pred[idx[upper_blend]] = (
-                    (1 - w) * base_predictions[idx[upper_blend]] + w * spec_preds[upper_blend]
-                )
+                y_pred[idx[upper_blend]] = (1 - w) * base_predictions[
+                    idx[upper_blend]
+                ] + w * spec_preds[upper_blend]
 
         return y_pred
 
@@ -7965,7 +7650,7 @@ class FullSegmentSpecialist:
         """
         Persist each specialist to ``specialist_{tier}.joblib``.
 
-        FIX C6: Generates a SHA-256 checksum file alongside each saved joblib
+        Generates a SHA-256 checksum file alongside each saved joblib
         artifact so load_model() and main.py _verify_model_checksums() can
         detect corruption or silent replacement between training runs.
         Previously all specialist saves used raw joblib.dump() with no checksum
@@ -7975,15 +7660,16 @@ class FullSegmentSpecialist:
         Returns list of (tier_name, path) for logging.
         """
         import hashlib as _hl
-        import joblib as _jl
         from pathlib import Path as _P
+
+        import joblib as _jl
 
         saved = []
         out = _P(output_dir)
         for tier_name, info in self.specialists.items():
             path = out / f"specialist_{tier_name}.joblib"
             _jl.dump(info["model"], path)
-            # FIX C6: write checksum immediately after dump so the two files
+            # write checksum immediately after dump so the two files
             # are always in sync — no window where joblib exists but checksum
             # is missing or stale from a previous training run.
             _checksum = _hl.sha256(path.read_bytes()).hexdigest()
@@ -7993,14 +7679,15 @@ class FullSegmentSpecialist:
         return saved
 
     @classmethod
-    def load(cls, output_dir) -> "FullSegmentSpecialist":
+    def load(cls, output_dir) -> FullSegmentSpecialist:
         """
         Reconstruct a FullSegmentSpecialist from saved joblib files.
 
         Missing tier files are silently skipped (non-fatal degraded mode).
         """
-        import joblib as _jl
         from pathlib import Path as _P
+
+        import joblib as _jl
 
         instance = cls()
         instance._fitted = True
@@ -8014,8 +7701,7 @@ class FullSegmentSpecialist:
                     "hi": hi,
                 }
         logger.info(
-            f"✅ FullSegmentSpecialist loaded: {len(instance.specialists)} tiers "
-            f"from {out}"
+            f"✅ FullSegmentSpecialist loaded: {len(instance.specialists)} tiers " f"from {out}"
         )
         return instance
 
@@ -8088,7 +7774,7 @@ def main():
         # Initialize trainer
         trainer = ModelTrainer()
 
-        # PA-02 FIX: Assign provenance to trainer so gate checks via
+        # Assign provenance to trainer so gate checks via
         # getattr(trainer, '_provenance', None) actually find the object.
         trainer._provenance = _provenance
 
@@ -8118,15 +7804,13 @@ def main():
         logger.info("MODEL TRAINING")
         logger.info("=" * 80)
 
-        # FIX-1/2: Use two_model_architecture when enabled in config.yaml.
+        # Use two_model_architecture when enabled in config.yaml.
         # xgboost_median (reg:squarederror) is the pricing model:
-        #   - symmetric loss -> ~50% overpricing rate (fixes Issue 1, G7 gate)
-        #   - max_depth=6 vs 4 -> better high-value segment R2 (fixes Issue 2)
+        #   - symmetric loss -> ~50% overpricing rate (G7 gate)
+        #   - max_depth=6 vs 4 -> better high-value segment R2
         # xgboost (reg:quantileerror alpha=0.65) is the risk/loading model.
         # Falls back to single-model train when two_model_architecture.enabled=false.
-        _tma_cfg = trainer.raw_config.get("training", {}).get(
-            "two_model_architecture", {}
-        )
+        _tma_cfg = trainer.raw_config.get("training", {}).get("two_model_architecture", {})
         if _tma_cfg.get("enabled", False):
             logger.info(
                 "Two-model architecture ENABLED:\n"
@@ -8176,9 +7860,7 @@ def main():
         if failed_validation:
             logger.error(
                 f"❌ {len(failed_validation)} model(s) failed validation:\n"
-                + "\n".join(
-                    f"   â€¢ {name}: {error}" for name, error in failed_validation
-                )
+                + "\n".join(f"   â€¢ {name}: {error}" for name, error in failed_validation)
             )
             raise ValidationError(
                 f"Training results validation failed for {len(failed_validation)} model(s)"
@@ -8202,11 +7884,9 @@ def main():
                 val_metrics = result["validation_metrics"]
 
                 # Calculate generalization gap using MetricsExtractor
-                gap = MetricsExtractor.calculate_generalization_gap(
-                    train_metrics, val_metrics
-                )
+                gap = MetricsExtractor.calculate_generalization_gap(train_metrics, val_metrics)
 
-                # FIX-3: For quantile models, RMSE gap is inflated vs the training
+                # For quantile models, RMSE gap is inflated vs the training
                 # objective (pinball loss). The comparison summary previously said
                 # "see pinball gap" but never showed it. Now we display both:
                 #   - Dollar-RMSE gap:  from MetricsExtractor (diagnostic, not the training metric)
@@ -8222,7 +7902,7 @@ def main():
                     _status_label = gap["train_val_status"].replace("_", " ").title()
                 row = {
                     "Model": name,
-                    # FIX-9: Column label is "Val RMSE" — NOT test RMSE.
+                    # Column label is "Val RMSE" — NOT test RMSE.
                     # Test RMSE is reported separately in TEST PERFORMANCE SUMMARY below
                     # after test evaluation completes. The two numbers come from different
                     # data splits and are not directly comparable (small n=268 test set
@@ -8230,7 +7910,7 @@ def main():
                     # expected, not a sign of data leakage or a bug).
                     "Val RMSE": f"${MetricsExtractor.get_rmse(val_metrics):,.0f}",
                     "Val R2": f"{MetricsExtractor.get_r2(val_metrics):.4f}",
-                    # FIX-9: RMSE Gap for quantile models uses pinball gap (training
+                    # RMSE Gap for quantile models uses pinball gap (training
                     # objective), NOT dollar-RMSE gap (which inflates vs squarederror
                     # baseline). Status column already shows the correct label.
                     "RMSE Gap": (
@@ -8263,7 +7943,7 @@ def main():
             print("\n[X] No successful models!")
             sys.exit(1)
 
-        # FIX-1 (Issue 3 / v7.5.0-patch5b): Route best_name by model role, not RMSE.
+        # Route best_name by model role, not RMSE.
         # Two-model architecture produces heterogeneous objectives: comparing
         # reg:squarederror and reg:quantileerror on RMSE is dimensionally incoherent.
         # Quantile loss at alpha=0.65 predicts the 65th-percentile; for right-skewed
@@ -8299,9 +7979,7 @@ def main():
             # Single-model path: pick by validation RMSE as before
             best_name = min(
                 valid.keys(),
-                key=lambda k: trainer.MetricsExtractor.get_rmse(
-                    results[k]["validation_metrics"]
-                ),
+                key=lambda k: trainer.MetricsExtractor.get_rmse(results[k]["validation_metrics"]),
             )
         best_result = results[best_name]
         best_path = Path(best_result["model_path"])
@@ -8381,9 +8059,7 @@ def main():
                         f"q75=${_params.get('threshold_high', 0):,.0f}"
                     )
         except Exception as _bc_meta_err:
-            logger.debug(
-                f"Could not persist bias correction thresholds: {_bc_meta_err}"
-            )
+            logger.debug(f"Could not persist bias correction thresholds: {_bc_meta_err}")
 
         # Save updated metadata
         try:
@@ -8419,7 +8095,7 @@ def main():
             y_val = data["y_val"]
 
             # Split: 60% calibration, 40% holdout
-            # FIX-3 (Issue 7 / v7.5.0-patch5b): stratified split preserves the
+            # stratified split preserves the
             # premium distribution in both halves.  Without it the 60/40 index-order
             # split can create mismatched distributions: calibration improvement was
             # measured as -2.11% RMSE (worse) on holdout vs +3.98% on the calib set
@@ -8427,9 +8103,7 @@ def main():
             from sklearn.preprocessing import KBinsDiscretizer as _KBD
 
             try:
-                _kbd = _KBD(
-                    n_bins=7, encode="ordinal", strategy="quantile", subsample=None
-                )
+                _kbd = _KBD(n_bins=7, encode="ordinal", strategy="quantile", subsample=None)
                 _y_val_arr = (
                     y_val.values.reshape(-1, 1)
                     if hasattr(y_val, "values")
@@ -8448,7 +8122,7 @@ def main():
                 y_val,
                 test_size=0.4,  # 40% for fair evaluation
                 random_state=trainer.config.random_state,
-                stratify=_y_val_bins,  # FIX-3: preserve premium distribution
+                stratify=_y_val_bins,
             )
 
             logger.info(
@@ -8466,7 +8140,7 @@ def main():
                 verify_checksum=trainer.config.verify_checksums,
             )
 
-            # FIX-3 (corrected): Snapshot conformal data AFTER reload, BEFORE any mutation.
+            # Snapshot conformal data AFTER reload, BEFORE any mutation.
             # The original snapshot was taken from the pre-reload in-memory best_model.
             # best_model is rebound to a new deserialized object above (FileSanitizer.safe_load),
             # so the pre-reload snapshot was from a different object identity than the one
@@ -8493,7 +8167,7 @@ def main():
 
             from insurance_ml.models import CalibratedModel
 
-            # NEW ISSUE A FIX: Switch from isotonic to linear calibration.
+            # Switch from isotonic to linear calibration.
             # Isotonic regression improved transformed-space RMSE by +7.42%
             # but degraded holdout original-space RMSE by 0.32% because:
             #   1. IsotonicRegression memorises 160 YJ-space samples, learning
@@ -8505,9 +8179,7 @@ def main():
             # Linear calibration (y = a*ŷ + b, 2 free parameters via OLS)
             # corrects systematic offset/scale bias without distorting the
             # tail ordering, and cannot overfit 160 samples.
-            calibrated_model = CalibratedModel(
-                base_model=best_model, calibration_method="linear"
-            )
+            calibrated_model = CalibratedModel(base_model=best_model, calibration_method="linear")
 
             logger.info("🔧 Fitting linear calibrator on calibration set...")
             calibrated_model.fit_calibrator(X_val=X_calib, y_val=y_calib)
@@ -8528,9 +8200,9 @@ def main():
             if hasattr(calibrated_model.base_model, "_conformal_data") and isinstance(
                 calibrated_model.base_model._conformal_data, dict
             ):
-                calibrated_model.base_model._conformal_data[
-                    "validation_predictions"
-                ] = y_calib_pred_cal.tolist()
+                calibrated_model.base_model._conformal_data["validation_predictions"] = (
+                    y_calib_pred_cal.tolist()
+                )
                 calibrated_model.base_model._conformal_data["validation_residuals"] = (
                     calibrated_model._validation_residuals.tolist()
                 )
@@ -8543,7 +8215,6 @@ def main():
                 f"validation residuals (std={np.std(calibrated_model._validation_residuals):.4f})"
             )
 
-            # ── PATCH 01 (G2): ISSUE-5 FIX REMOVED ─────────────────────────────────
             # Original block called calibrated_model.predict(X_val) on full 268-sample
             # val set, creating circular conformal coverage. Removed: conformal
             # calibration now stays on X_calib only (~160 samples) — honest coverage.
@@ -8601,20 +8272,18 @@ def main():
                 model_name_b="Calibrated",
             )
 
-            # FIX-2/FIX-8: Show all decision criteria explicitly so the reasoning
-            # is always auditable. FIX-8 adds a MAE gate: calibration that improves
+            # Show all decision criteria explicitly so the reasoning
+            # is always auditable. adds a MAE gate: calibration that improves
             # RMSE/R² while worsening MAE by >2% is not genuinely helpful for insurance
             # pricing (MAE reflects the typical policyholder experience more directly).
             _rmse_ok = comparison["rmse_improvement_pct"] > 1.0
             _r2_ok = comparison["r2_improvement_pct"] >= 0
-            _mae_ok = (
-                comparison["mae_improvement_pct"] >= -2.0
-            )  # FIX-8: allow <=2% MAE regression
+            _mae_ok = comparison["mae_improvement_pct"] >= -2.0  # allow <=2% MAE regression
             use_calibrated = (
                 comparison["is_better"]
                 and _rmse_ok
                 and _r2_ok
-                and _mae_ok  # FIX-8: MAE must not worsen by more than 2%
+                and _mae_ok  # MAE must not worsen by more than 2%
             )
             logger.info(
                 f"\nCalibration Impact (HOLDOUT SET - NO LEAK):\n"
@@ -8633,15 +8302,11 @@ def main():
                 logger.info("✅ Using calibrated model for test evaluation")
 
                 calibrated_name = f"{best_name}_calibrated"
-                calibrated_path = (
-                    trainer.config.output_dir / f"{calibrated_name}.joblib"
-                )
+                calibrated_path = trainer.config.output_dir / f"{calibrated_name}.joblib"
 
                 # Save calibrated model
                 _cal_objective = str(
-                    results[best_name]
-                    .get("model_config", {})
-                    .get("objective", "reg:squarederror")
+                    results[best_name].get("model_config", {}).get("objective", "reg:squarederror")
                 )
                 _cal_meta = {
                     "calibration_method": "linear",
@@ -8696,12 +8361,10 @@ def main():
             else:
                 logger.info("⚠️  Calibration did not improve performance on holdout set")
                 logger.info("   Keeping uncalibrated model")
-                # FIX-3: Restore _conformal_data that was mutated by STEP 3.
+                # Restore _conformal_data that was mutated by STEP 3.
                 # Without this rollback the uncalibrated model carries 160-sample
                 # conformal data instead of the correct 268 → CI width $112k.
-                if _conformal_snapshot is not None and hasattr(
-                    best_model, "_conformal_data"
-                ):
+                if _conformal_snapshot is not None and hasattr(best_model, "_conformal_data"):
                     best_model._conformal_data.update(_conformal_snapshot)
                     logger.info(
                         f"   ✅ Conformal data restored to pre-calibration state: "
@@ -8713,9 +8376,7 @@ def main():
         # ── PATCH 03 (G5): always write bias_correction.json ─────────────────
         _best_bc = results[best_name].get("bias_correction")
         _best_objective = str(
-            results[best_name]
-            .get("model_config", {})
-            .get("objective", "reg:squarederror")
+            results[best_name].get("model_config", {}).get("objective", "reg:squarederror")
         )
         always_write_bias_correction(
             output_dir=trainer.config.output_dir,
@@ -8796,12 +8457,12 @@ def main():
             # under that name so the router remains functional.
             if "very_high" in _full_specialist.specialists:
                 import hashlib as _hl_compat
+
                 import joblib as _jl_compat
+
                 _compat_path = trainer.config.output_dir / "xgboost_high_value_specialist.joblib"
-                _jl_compat.dump(
-                    _full_specialist.specialists["very_high"]["model"], _compat_path
-                )
-                # FIX C6: write checksum for the legacy compat file.
+                _jl_compat.dump(_full_specialist.specialists["very_high"]["model"], _compat_path)
+                # write checksum for the legacy compat file.
                 # This is the artifact that predict.py HighValueSegmentRouter loads.
                 # Previously this raw joblib.dump() had no checksum, causing the
                 # permanent "No checksum file for xgboost_high_value_specialist"
@@ -8809,8 +8470,7 @@ def main():
                 # integrity-unverifiable on every inference call.
                 _ck_compat = _hl_compat.sha256(_compat_path.read_bytes()).hexdigest()
                 _ck_compat_path = (
-                    trainer.config.output_dir
-                    / "xgboost_high_value_specialist_checksum.txt"
+                    trainer.config.output_dir / "xgboost_high_value_specialist_checksum.txt"
                 )
                 _ck_compat_path.write_text(f"{_ck_compat}\n")
                 logger.info(
@@ -8867,12 +8527,8 @@ def main():
 
         if _has_full_specialist:
             try:
-                import joblib as _jl_eval
-
                 _fe_eval = data["feature_engineer"]
-                _X_test_e = _fe_eval.transform_pipeline(
-                    data["X_test_raw"], remove_outliers=False
-                )
+                _X_test_e = _fe_eval.transform_pipeline(data["X_test_raw"], remove_outliers=False)
                 _y_test_orig_e = (
                     data["y_test_raw"].values
                     if hasattr(data["y_test_raw"], "values")
@@ -8922,12 +8578,15 @@ def main():
                         _underpred = _smoker_mask & (_base_orig < _SMOKER_PRED_THRESHOLD)
                         n_smoker_up = int(_underpred.sum())
                         if n_smoker_up > 0:
-                            _X_up = _X_test_e.iloc[_underpred] if hasattr(_X_test_e, "iloc") else _X_test_e[_underpred]
-                            _hm_preds = _hm_model.predict(_X_up)
-                            _routed[_underpred] = (
-                                (1 - _SMOKER_BLEND_WEIGHT) * _routed[_underpred]
-                                + _SMOKER_BLEND_WEIGHT * _hm_preds
+                            _X_up = (
+                                _X_test_e.iloc[_underpred]
+                                if hasattr(_X_test_e, "iloc")
+                                else _X_test_e[_underpred]
                             )
+                            _hm_preds = _hm_model.predict(_X_up)
+                            _routed[_underpred] = (1 - _SMOKER_BLEND_WEIGHT) * _routed[
+                                _underpred
+                            ] + _SMOKER_BLEND_WEIGHT * _hm_preds
                             logger.info(
                                 f"   Smoker-aware routing: {n_smoker_up} under-predicted "
                                 f"smoker policies blended with high_mid specialist "
@@ -8938,9 +8597,8 @@ def main():
 
                 # Metrics
                 from sklearn.metrics import r2_score as _r2s
-                _routed_bd = CostWeightedMetrics.segment_r2_breakdown(
-                    _y_test_orig_e, _routed
-                )
+
+                _routed_bd = CostWeightedMetrics.segment_r2_breakdown(_y_test_orig_e, _routed)
                 _routed_r2 = float(_r2s(_y_test_orig_e, _routed))
                 _routed_rmse = float(np.sqrt(np.mean((_y_test_orig_e - _routed) ** 2)))
                 _base_r2 = test_result["metrics"]["original_r2"]
@@ -8961,16 +8619,12 @@ def main():
                 )
                 logger.info(f"  {'-'*56}")
                 for _, _row in _routed_bd.iterrows():
-                    _r2_str = (
-                        f"{_row['r2']:8.4f}" if not pd.isna(_row["r2"]) else "     N/A"
-                    )
+                    _r2_str = f"{_row['r2']:8.4f}" if not pd.isna(_row["r2"]) else "     N/A"
                     logger.info(
                         f"  {_row['segment']:<12} {int(_row['n_samples']):<8} "
                         f"{_r2_str} ${_row['rmse']:>9,.0f} {_row['overpricing_rate']:>11.1%}"
                     )
-                test_result["routed_segment_breakdown"] = _routed_bd.to_dict(
-                    orient="records"
-                )
+                test_result["routed_segment_breakdown"] = _routed_bd.to_dict(orient="records")
                 test_result["routed_r2"] = _routed_r2
                 test_result["routed_rmse"] = _routed_rmse
 
@@ -9058,7 +8712,7 @@ def main():
         logger.info(f"MAPE:  {test_metrics.get('original_mape', 0):.2f}%")
 
         ci = test_result.get("explainability", {}).get("interval_metrics")
-        # v7.5.2 FIX: was hardcoded to 95%; now reads configured level.
+        # was hardcoded to 95%; now reads configured level.
         _ci_pct = trainer.explainability_config.confidence_level * 100
 
         if ci is not None:
@@ -9106,7 +8760,7 @@ def main():
                 model_name=best_name,
                 y_true=_y_test_orig,
                 y_pred=_y_pred_orig,
-                config=trainer.raw_config,  # FIX-4c: config fallback
+                config=trainer.raw_config,  # config fallback
             )
             test_result["g1_g7_gate"] = _g1g7
             if not _g1g7.get("g7_pass"):
@@ -9118,12 +8772,12 @@ def main():
         eval_time = time.time() - start_time
         logger.info(f"✅ Test evaluation completed in {eval_time:.1f}s\n")
 
-        # ── BUG-2 FIX (v7.5.0): Collect all gate results before declaring ready ──
+        # ── Collect all gate results before declaring ready ──
         # Previously every gate logged [ERROR] but the pipeline continued to
         # print "[OK] Ready for deployment!" regardless.  Three simultaneous gate
         # failures (G4, G6, G7) would all pass silently.
         #
-        # Fix: build a gate summary after all gates have been evaluated, log a
+        # build a gate summary after all gates have been evaluated, log a
         # clear pass/fail table, and sys.exit(1) if ANY gate failed.  This
         # mirrors the behaviour of typical CI deployment gates (fail-fast).
         _gate_failures: list = []
@@ -9213,15 +8867,12 @@ def main():
 
         if _gate_failures:
             logger.error("\n" + "=" * 80)
-            logger.error(
-                "❌ DEPLOYMENT BLOCKED — %d gate(s) failed:", len(_gate_failures)
-            )
+            logger.error("❌ DEPLOYMENT BLOCKED — %d gate(s) failed:", len(_gate_failures))
             for _fail_msg in _gate_failures:
                 logger.error("   • %s", _fail_msg)
             logger.error("=" * 80)
             logger.error(
-                "Resolve all gate failures before deploying.  "
-                "Pipeline exiting with code 1."
+                "Resolve all gate failures before deploying.  " "Pipeline exiting with code 1."
             )
             print(
                 f"\n{'='*80}\n❌ DEPLOYMENT BLOCKED: {len(_gate_failures)} gate failure(s).\n"
@@ -9232,11 +8883,7 @@ def main():
         # ── P2-A: register best model to MLflow Model Registry ───────────────
         # Fires only when all gates pass and register_to_mlflow=True.
         # The best model's run is CLOSED here — safe to reopen by run_id.
-        if (
-            not _gate_failures
-            and trainer.mlflow.enabled
-            and trainer.config.register_to_mlflow
-        ):
+        if not _gate_failures and trainer.mlflow.enabled and trainer.config.register_to_mlflow:
             try:
                 from mlflow.models import infer_signature as _infer_sig
 
@@ -9244,11 +8891,7 @@ def main():
                 _reg_run_id = results.get(best_name, {}).get("mlflow_run_id")
                 _X_val_reg = data.get("X_val")
 
-                if (
-                    _reg_model_obj is not None
-                    and _X_val_reg is not None
-                    and _reg_run_id
-                ):
+                if _reg_model_obj is not None and _X_val_reg is not None and _reg_run_id:
                     _X_sample = _X_val_reg.head(5)
                     try:
                         _y_sample = _reg_model_obj.predict(_X_sample)
@@ -9265,9 +8908,7 @@ def main():
                         "gate_failures": "0",
                     }
 
-                    with trainer.mlflow._mlflow.start_run(
-                        run_id=_reg_run_id, nested=False
-                    ):
+                    with trainer.mlflow._mlflow.start_run(run_id=_reg_run_id, nested=False):
                         _reg_result = trainer.mlflow.register_model_to_registry(
                             model=_reg_model_obj,
                             model_name=best_name,
@@ -9281,9 +8922,7 @@ def main():
                             f"     URI: {_reg_result.get('mlflow_model_uri', 'N/A')}"
                         )
             except Exception as _reg_err:
-                logger.warning(
-                    f"Model Registry registration failed (non-fatal): {_reg_err}"
-                )
+                logger.warning(f"Model Registry registration failed (non-fatal): {_reg_err}")
         # ─────────────────────────────────────────────────────────────────────
 
         # ── TRAIN-1: log gate results to MLflow ───────────────────────────────
@@ -9293,14 +8932,15 @@ def main():
         try:
             _best_mlflow_run_id = results.get(best_name, {}).get("mlflow_run_id")
             if trainer.mlflow.enabled and _best_mlflow_run_id:
-                _safe_f = lambda v: (
-                    float(v)
-                    if isinstance(v, (int, float, np.number)) and np.isfinite(float(v))
-                    else None
-                )
-                with trainer.mlflow._mlflow.start_run(
-                    run_id=_best_mlflow_run_id, nested=False
-                ):
+
+                def _safe_f(v):
+                    return (
+                        float(v)
+                        if isinstance(v, int | float | np.number) and np.isfinite(float(v))
+                        else None
+                    )
+
+                with trainer.mlflow._mlflow.start_run(run_id=_best_mlflow_run_id, nested=False):
                     # G4 — provenance
                     _prov_tag = getattr(trainer, "_provenance", None)
                     _g4 = _prov_tag is not None and getattr(
@@ -9319,14 +8959,10 @@ def main():
                         )
                         _cwr2 = _safe_f(_g6.get("cost_weighted_r2"))
                         if _cwr2 is not None:
-                            trainer.mlflow._mlflow.log_metric(
-                                "gate_g6_cost_weighted_r2", _cwr2
-                            )
+                            trainer.mlflow._mlflow.log_metric("gate_g6_cost_weighted_r2", _cwr2)
                         _veto_segs = _g6.get("veto_segments", [])
                         if _veto_segs:
-                            trainer.mlflow._mlflow.set_tag(
-                                "gate_g6_veto_segments", str(_veto_segs)
-                            )
+                            trainer.mlflow._mlflow.set_tag("gate_g6_veto_segments", str(_veto_segs))
 
                     # G7 — overpricing rate
                     _g1g7 = test_result.get("g1_g7_gate", {})
@@ -9339,21 +8975,13 @@ def main():
                         )
                         _op_rate = _safe_f(_g1g7.get("overpricing_rate"))
                         if _op_rate is not None:
-                            trainer.mlflow._mlflow.log_metric(
-                                "gate_g7_overpricing_rate", _op_rate
-                            )
+                            trainer.mlflow._mlflow.log_metric("gate_g7_overpricing_rate", _op_rate)
 
                     # Overall deployment readiness tag
                     _all_gates_pass = len(_gate_failures) == 0
-                    trainer.mlflow._mlflow.set_tag(
-                        "deployment_ready", str(_all_gates_pass)
-                    )
-                    trainer.mlflow._mlflow.set_tag(
-                        "gate_failures_count", str(len(_gate_failures))
-                    )
-                    logger.info(
-                        f"  MLflow: gate tags written to run {_best_mlflow_run_id[:8]}..."
-                    )
+                    trainer.mlflow._mlflow.set_tag("deployment_ready", str(_all_gates_pass))
+                    trainer.mlflow._mlflow.set_tag("gate_failures_count", str(len(_gate_failures)))
+                    logger.info(f"  MLflow: gate tags written to run {_best_mlflow_run_id[:8]}...")
         except Exception as _g_err:
             logger.warning(f"MLflow gate logging failed: {_g_err}")
         # ─────────────────────────────────────────────────────────────────────
@@ -9441,7 +9069,7 @@ def main():
                 train_metrics, val_metrics, test_metrics
             )
 
-            logger.info(f"\nGeneralization Analysis:")
+            logger.info("\nGeneralization Analysis:")
 
             # Train → Validation RMSE gap
             # NOTE: gap_pct is dollar-RMSE based, not pinball loss.
@@ -9476,9 +9104,7 @@ def main():
 
             # Validation → Test gap
             if "val_test_gap_pct" in gap_analysis:
-                logger.info(
-                    f"   Validation â†' Test:  {gap_analysis['val_test_gap_pct']:+.1f}%"
-                )
+                logger.info(f"   Validation â†' Test:  {gap_analysis['val_test_gap_pct']:+.1f}%")
 
                 val_test_status = gap_analysis.get("val_test_status", "")
                 if "excellent" in val_test_status.lower():
@@ -9496,16 +9122,10 @@ def main():
             if is_calibrated and "calibration_improvement" in results[best_name]:
                 cal_info = results[best_name]["calibration_improvement"]
 
-                logger.info(f"\nCalibration Impact:")
-                logger.info(
-                    f"   RMSE Improvement: {cal_info['rmse_improvement_pct']:+.2f}%"
-                )
-                logger.info(
-                    f"   R² Improvement:   {cal_info['r2_improvement_pct']:+.2f}%"
-                )
-                logger.info(
-                    f"   MAE Improvement:  {cal_info['mae_improvement_pct']:+.2f}%"
-                )
+                logger.info("\nCalibration Impact:")
+                logger.info(f"   RMSE Improvement: {cal_info['rmse_improvement_pct']:+.2f}%")
+                logger.info(f"   R² Improvement:   {cal_info['r2_improvement_pct']:+.2f}%")
+                logger.info(f"   MAE Improvement:  {cal_info['mae_improvement_pct']:+.2f}%")
 
                 if cal_info["is_better"]:
                     logger.info("   ✅ Calibration effective")
@@ -9522,7 +9142,7 @@ def main():
                     coverage = test_metrics.get("interval_coverage_pct", 0)
                     avg_width = test_metrics.get("interval_avg_width", 0)
 
-                    # v7.5.2 FIX: was hardcoded to 95%; now reads configured level.
+                    # was hardcoded to 95%; now reads configured level.
                     _ci_pct2 = trainer.explainability_config.confidence_level * 100
                     _tol2 = _ci_pct2 * 0.02
                     _tol5 = _ci_pct2 * 0.05
@@ -9560,9 +9180,7 @@ def main():
 
         # Feature importance
         feature_names = data["X_train"].columns.tolist()
-        feature_importance = ModelDiagnostics.get_feature_importance(
-            best_model, feature_names=feature_names, top_n=15
-        )
+        ModelDiagnostics.get_feature_importance(best_model, feature_names=feature_names, top_n=15)
 
         # Prediction distribution
         y_test_pred_original = test_result["predictions"]
@@ -9573,9 +9191,7 @@ def main():
         )
 
         # Calibration check
-        calibration = ModelDiagnostics.calculate_calibration(
-            y_test_original, y_test_pred_original, n_bins=10
-        )
+        ModelDiagnostics.calculate_calibration(y_test_original, y_test_pred_original, n_bins=10)
 
         # Business metrics
         business_metrics = ModelDiagnostics.calculate_business_metrics(
@@ -9586,9 +9202,7 @@ def main():
         ModelDiagnostics.error_by_range(y_test_original, y_test_pred_original)
 
         # Sample predictions
-        samples = ModelDiagnostics.show_sample_predictions(
-            y_test_original, y_test_pred_original, n_samples=5
-        )
+        ModelDiagnostics.show_sample_predictions(y_test_original, y_test_pred_original, n_samples=5)
 
         logger.info("=" * 80 + "\n")
 
@@ -9599,16 +9213,14 @@ def main():
             config_path = get_project_root() / "configs" / "config.yaml"
         except ImportError:
             # Fallback: calculate project root from train.py location
-            config_path = (
-                Path(__file__).parent.parent.parent / "configs" / "config.yaml"
-            )
+            config_path = Path(__file__).parent.parent.parent / "configs" / "config.yaml"
 
         # Verify it exists
         if not config_path.exists():
             logger.warning(f"⚠️  config.yaml not found at {config_path}")
             config_path = "config.yaml"  # Let save_model_metadata() search for it
 
-        # FIX-2 (Issue 5 / v7.5.0-patch5b): pass provenance fields to silence
+        # pass provenance fields to silence
         # the "{'git_commit','random_state','pipeline_version'} missing" warning.
         # _provenance and VERSION are in scope in main().
         trainer.model_manager.save_model_metadata(
@@ -9641,19 +9253,20 @@ def main():
         y_test_pred_original = test_result["predictions"]
         y_test_original = test_result["y_test_original"]
 
-        analyze_high_value_segment(
-            y_test_original, y_test_pred_original, trainer.raw_config
-        )
+        analyze_high_value_segment(y_test_original, y_test_pred_original, trainer.raw_config)
 
         # ── TRAIN-2: log test metrics + diagnostics to best model's run ───────
         try:
             _best_run_id_final = results.get(best_name, {}).get("mlflow_run_id")
             if trainer.mlflow.enabled and _best_run_id_final:
-                _sf = lambda v: (
-                    float(v)
-                    if isinstance(v, (int, float, np.number)) and np.isfinite(float(v))
-                    else None
-                )
+
+                def _sf(v):
+                    return (
+                        float(v)
+                        if isinstance(v, int | float | np.number) and np.isfinite(float(v))
+                        else None
+                    )
+
                 _test_payload: dict[str, float] = {}
 
                 # Core test metrics
@@ -9680,9 +9293,7 @@ def main():
                         _test_payload[_gk] = _v
 
                 # Pipeline timing
-                _test_payload["total_pipeline_time_s"] = float(
-                    time.time() - pipeline_start
-                )
+                _test_payload["total_pipeline_time_s"] = float(time.time() - pipeline_start)
                 _test_payload["prep_time_s"] = float(prep_time)
                 _test_payload["train_time_s"] = float(train_time)
                 _test_payload["eval_time_s"] = float(eval_time)
@@ -9699,9 +9310,7 @@ def main():
                     if _v is not None:
                         _test_payload[f"dist_{_dk}"] = _v
 
-                with trainer.mlflow._mlflow.start_run(
-                    run_id=_best_run_id_final, nested=False
-                ):
+                with trainer.mlflow._mlflow.start_run(run_id=_best_run_id_final, nested=False):
                     if _test_payload:
                         trainer.mlflow._mlflow.log_metrics(_test_payload)
                     # Tag the model name and version
@@ -9735,9 +9344,7 @@ def main():
         try:
             _best_run_id_art = results.get(best_name, {}).get("mlflow_run_id")
             if trainer.mlflow.enabled and _best_run_id_art:
-                with trainer.mlflow._mlflow.start_run(
-                    run_id=_best_run_id_art, nested=False
-                ):
+                with trainer.mlflow._mlflow.start_run(run_id=_best_run_id_art, nested=False):
                     # Residual diagnostic plots
                     _residual_dir = trainer.config.reports_dir / "residuals" / best_name
                     if _residual_dir.exists():
@@ -9769,9 +9376,7 @@ def main():
                         except Exception:
                             pass
 
-                logger.info(
-                    f"  MLflow: artifacts attached to run {_best_run_id_art[:8]}..."
-                )
+                logger.info(f"  MLflow: artifacts attached to run {_best_run_id_art[:8]}...")
         except Exception as _t3_err:
             logger.warning(f"MLflow artifact logging failed: {_t3_err}")
         # ─────────────────────────────────────────────────────────────────────
@@ -9781,7 +9386,7 @@ def main():
         print(f"Reports: {trainer.config.reports_dir}")
         print(f"Best: {best_name}")
 
-        print(f"\nTest Performance:")
+        print("\nTest Performance:")
         print(f"  RMSE: ${test_metrics['original_rmse']:.2f}")
         print(f"  R²:   {test_metrics['original_r2']:.4f}")
 
@@ -9814,18 +9419,18 @@ def main():
             except Exception as _ev_err:
                 logger.debug(f"Could not read unified_summary.json: {_ev_err}")
         if _biz_gate_passed is True:
-            print(f"\n[OK] Ready for deployment! (ML accuracy ✅ + Business value ✅)")
+            print("\n[OK] Ready for deployment! (ML accuracy ✅ + Business value ✅)")
         elif _biz_gate_passed is False:
             print(
-                f"\n[OK] Gate checks passed — ML model is accurate.\n"
-                f"⚠️  Business evaluation recommends ML-ONLY over hybrid.\n"
-                f"    Deploy xgboost_median as ML-only predictor.\n"
-                f"    Re-run evaluate.py to confirm before deploying hybrid."
+                "\n[OK] Gate checks passed — ML model is accurate.\n"
+                "⚠️  Business evaluation recommends ML-ONLY over hybrid.\n"
+                "    Deploy xgboost_median as ML-only predictor.\n"
+                "    Re-run evaluate.py to confirm before deploying hybrid."
             )
         else:
             print(
-                f"\n[OK] Ready for deployment!\n"
-                f"ℹ️  Run evaluate.py to validate business value before deploying hybrid."
+                "\n[OK] Ready for deployment!\n"
+                "ℹ️  Run evaluate.py to validate business value before deploying hybrid."
             )
 
     except KeyboardInterrupt:

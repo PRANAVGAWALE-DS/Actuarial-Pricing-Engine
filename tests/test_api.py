@@ -61,10 +61,9 @@ Coverage:
 
 from __future__ import annotations
 
-import os
 import sys
-import time
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -81,21 +80,28 @@ for _path in (str(_PROJECT_ROOT), str(_SRC_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from api.schemas import (
-    BatchPredictRequest,
-    BatchPredictResponse,
-    BatchPredictRecord,
-    PredictRequest,
-    PredictResponse,
+import warnings as _warnings_guard  # noqa: E402
+
+from api.schemas import (  # noqa: E402
     VALID_REGIONS,
     VALID_SEX,
     VALID_SMOKER,
+    BatchPredictRequest,
+    BatchPredictResponse,
+    PredictRequest,
+    PredictResponse,
 )
-import warnings as _warnings_guard
+
 with _warnings_guard.catch_warnings():
     _warnings_guard.simplefilter("ignore", RuntimeWarning)
-    from api.routes import MetricsCollector, _hash_input, _API_VERSION, verify_api_key, verify_metrics_token
     import api.routes as _routes_module
+    from api.routes import (
+        _API_VERSION,
+        MetricsCollector,
+        _hash_input,
+        verify_api_key,
+        verify_metrics_token,
+    )
 
 
 # ===========================================================================
@@ -384,27 +390,19 @@ class TestResponseSchemas:
 
 @pytest.mark.unit
 class TestMetricsCollector:
-    def test_startup_time_is_inf_at_construction(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_startup_time_is_inf_at_construction(self, fresh_metrics: MetricsCollector) -> None:
         assert fresh_metrics._startup_time == float("inf")
 
-    def test_mark_ready_sets_finite_startup_time(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_mark_ready_sets_finite_startup_time(self, fresh_metrics: MetricsCollector) -> None:
         fresh_metrics.mark_ready()
         assert fresh_metrics._startup_time != float("inf")
         assert fresh_metrics._startup_time > 0
 
-    def test_uptime_zero_before_mark_ready(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_uptime_zero_before_mark_ready(self, fresh_metrics: MetricsCollector) -> None:
         snap = fresh_metrics.snapshot()
         assert snap["uptime_seconds"] == 0.0
 
-    def test_uptime_positive_after_mark_ready(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_uptime_positive_after_mark_ready(self, fresh_metrics: MetricsCollector) -> None:
         fresh_metrics.mark_ready()
         time.sleep(0.11)
         snap = fresh_metrics.snapshot()
@@ -426,9 +424,7 @@ class TestMetricsCollector:
         assert snap["total"] == 1
         assert snap["errors"] == 1
 
-    def test_error_rate_pct_correct(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_error_rate_pct_correct(self, fresh_metrics: MetricsCollector) -> None:
         fresh_metrics.record_prediction(0.1, success=True)
         fresh_metrics.record_prediction(0.1, success=True)
         fresh_metrics.record_prediction(0.1, success=False)
@@ -450,26 +446,20 @@ class TestMetricsCollector:
         snap = fresh_metrics.snapshot()
         assert snap["error_rate_pct"] == 0.0
 
-    def test_latency_samples_recorded(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_latency_samples_recorded(self, fresh_metrics: MetricsCollector) -> None:
         for i in range(5):
             fresh_metrics.record_prediction(elapsed_s=(i + 1) * 0.1, success=True)
         snap = fresh_metrics.snapshot()
         assert snap["latency_samples"] == 5
 
-    def test_latency_percentiles_ordered(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_latency_percentiles_ordered(self, fresh_metrics: MetricsCollector) -> None:
         """p50 <= p95 <= p99 must always hold."""
         for i in range(100):
             fresh_metrics.record_prediction(elapsed_s=i * 0.01, success=True)
         snap = fresh_metrics.snapshot()
         assert snap["p50_ms"] <= snap["p95_ms"] <= snap["p99_ms"]
 
-    def test_mean_ms_is_positive(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_mean_ms_is_positive(self, fresh_metrics: MetricsCollector) -> None:
         fresh_metrics.record_prediction(elapsed_s=0.12, success=True)
         snap = fresh_metrics.snapshot()
         assert snap["mean_ms"] > 0
@@ -497,12 +487,10 @@ class TestMetricsCollector:
         snap = fresh_metrics.snapshot()
         assert snap["total"] == n_threads * n_per_thread
 
-    def test_rolling_window_respects_max_samples(
-        self, fresh_metrics: MetricsCollector
-    ) -> None:
+    def test_rolling_window_respects_max_samples(self, fresh_metrics: MetricsCollector) -> None:
         """After MAX_LATENCY_SAMPLES predictions, the deque wraps correctly."""
         limit = MetricsCollector._MAX_LATENCY_SAMPLES
-        for i in range(limit + 50):
+        for _i in range(limit + 50):
             fresh_metrics.record_prediction(elapsed_s=0.001, success=True)
         snap = fresh_metrics.snapshot()
         # latency_samples should be capped at MAX_LATENCY_SAMPLES
@@ -582,22 +570,28 @@ _MockCreds = lambda token: SimpleNamespace(credentials=token)  # noqa: E731
 class TestVerifyApiKey:
     def test_no_api_key_strict_false_allows_all(self) -> None:
         """Dev mode: API_KEY unset + STRICT_AUTH=false → no exception."""
-        with patch.object(_routes_module, "_API_KEY", None), \
-             patch.object(_routes_module, "_STRICT_AUTH", False):
+        with (
+            patch.object(_routes_module, "_API_KEY", None),
+            patch.object(_routes_module, "_STRICT_AUTH", False),
+        ):
             verify_api_key(credentials=None)  # must not raise
 
     def test_no_api_key_strict_true_raises_503(self) -> None:
         """FIX F-09: STRICT_AUTH=true + no API_KEY → 503 (fail-secure)."""
-        with patch.object(_routes_module, "_API_KEY", None), \
-             patch.object(_routes_module, "_STRICT_AUTH", True):
+        with (
+            patch.object(_routes_module, "_API_KEY", None),
+            patch.object(_routes_module, "_STRICT_AUTH", True),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 verify_api_key(credentials=None)
         assert exc_info.value.status_code == 503
 
     def test_missing_header_raises_401_with_hint(self) -> None:
         """FIX U-09: API_KEY set but no Authorization header → 401, hints at header name."""
-        with patch.object(_routes_module, "_API_KEY", "secret-token"), \
-             patch.object(_routes_module, "_STRICT_AUTH", False):
+        with (
+            patch.object(_routes_module, "_API_KEY", "secret-token"),
+            patch.object(_routes_module, "_STRICT_AUTH", False),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 verify_api_key(credentials=None)
         exc = exc_info.value
@@ -606,8 +600,10 @@ class TestVerifyApiKey:
 
     def test_wrong_token_raises_401(self) -> None:
         """FIX U-09: API_KEY set, wrong bearer token → 401."""
-        with patch.object(_routes_module, "_API_KEY", "secret-token"), \
-             patch.object(_routes_module, "_STRICT_AUTH", False):
+        with (
+            patch.object(_routes_module, "_API_KEY", "secret-token"),
+            patch.object(_routes_module, "_STRICT_AUTH", False),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 verify_api_key(credentials=_MockCreds("wrong-token"))
         assert exc_info.value.status_code == 401
@@ -615,14 +611,18 @@ class TestVerifyApiKey:
 
     def test_correct_token_passes(self) -> None:
         """Valid bearer token → no exception."""
-        with patch.object(_routes_module, "_API_KEY", "secret-token"), \
-             patch.object(_routes_module, "_STRICT_AUTH", False):
+        with (
+            patch.object(_routes_module, "_API_KEY", "secret-token"),
+            patch.object(_routes_module, "_STRICT_AUTH", False),
+        ):
             verify_api_key(credentials=_MockCreds("secret-token"))  # must not raise
 
     def test_missing_header_and_wrong_token_produce_different_details(self) -> None:
         """Missing header vs wrong token must produce distinct detail strings (log differentiation)."""
-        with patch.object(_routes_module, "_API_KEY", "secret-token"), \
-             patch.object(_routes_module, "_STRICT_AUTH", False):
+        with (
+            patch.object(_routes_module, "_API_KEY", "secret-token"),
+            patch.object(_routes_module, "_STRICT_AUTH", False),
+        ):
             with pytest.raises(HTTPException) as missing_exc:
                 verify_api_key(credentials=None)
             with pytest.raises(HTTPException) as wrong_exc:

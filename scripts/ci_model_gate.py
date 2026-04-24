@@ -136,15 +136,15 @@ def build_pipeline():
     model = xgb.XGBRegressor(
         objective="reg:squarederror",
         n_estimators=100,
-        max_depth=3,          # empirically chosen — see note above
+        max_depth=3,  # empirically chosen — see note above
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
         min_child_weight=30,  # empirically chosen — see note above
-        reg_lambda=10.0,      # empirically chosen — see note above
+        reg_lambda=10.0,  # empirically chosen — see note above
         random_state=SEED,
-        tree_method="hist",   # CPU-safe; production uses cuda:0
-        device="cpu",         # explicit — no GPU on CI runner
+        tree_method="hist",  # CPU-safe; production uses cuda:0
+        device="cpu",  # explicit — no GPU on CI runner
         verbosity=0,
     )
 
@@ -218,7 +218,7 @@ def main() -> int:
     print("=" * 65)
 
     # ── Load ─────────────────────────────────────────────────────
-    print(f"\n[1/4] Loading sample data...")
+    print("\n[1/4] Loading sample data...")
     X_train, y_train, X_test, y_test = load_data()
     print(f"      Train: {len(X_train)} rows | Test: {len(X_test)} rows")
     print(f"      Features: {NUMERICAL_FEATURES + CATEGORICAL_FEATURES}")
@@ -251,7 +251,7 @@ def main() -> int:
 
     # ── Gate evaluation ───────────────────────────────────────────
     print("\n[4/4] Evaluating deployment gates...")
-    print(f"      Thresholds sourced from configs/config.yaml")
+    print("      Thresholds sourced from configs/config.yaml")
     gates, train_val_gap = evaluate_gates(train_metrics, test_metrics)
 
     all_passed = True

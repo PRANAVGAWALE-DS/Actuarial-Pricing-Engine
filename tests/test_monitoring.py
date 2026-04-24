@@ -37,9 +37,7 @@ Coverage:
 from __future__ import annotations
 
 import json
-import warnings
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -52,7 +50,6 @@ from insurance_ml.monitoring import (
     _tvd,
     _z_score,
 )
-
 
 # ===========================================================================
 # Helpers
@@ -131,9 +128,7 @@ class TestCreateBaseline:
         for key in ("mean", "std", "min", "max", "q25", "q50", "q75"):
             assert key in ts
 
-    def test_numeric_feature_stats_recorded(
-        self, tmp_path: Path
-    ) -> None:
+    def test_numeric_feature_stats_recorded(self, tmp_path: Path) -> None:
         df = _make_numeric_df(30)
         y = pd.Series(np.ones(30) * 5000.0)
         out = tmp_path / "b.json"
@@ -146,9 +141,7 @@ class TestCreateBaseline:
         for key in ("mean", "std", "min", "max"):
             assert key in age_stats
 
-    def test_categorical_feature_stats_recorded(
-        self, tmp_path: Path
-    ) -> None:
+    def test_categorical_feature_stats_recorded(self, tmp_path: Path) -> None:
         df = _make_categorical_df(30)
         y = pd.Series(np.ones(30) * 5000.0)
         out = tmp_path / "c.json"
@@ -173,9 +166,7 @@ class TestCreateBaseline:
                 overwrite=False,
             )
 
-    def test_overwrites_with_overwrite_true(
-        self, tmp_path: Path, sample_df: pd.DataFrame
-    ) -> None:
+    def test_overwrites_with_overwrite_true(self, tmp_path: Path, sample_df: pd.DataFrame) -> None:
         out = tmp_path / "baseline.json"
         out.write_text('{"old": true}')
         DriftMonitor.create_baseline(
@@ -217,15 +208,11 @@ class TestDetectDrift:
         self, drift_baseline_path: Path, sample_df: pd.DataFrame
     ) -> None:
         X = sample_df.drop(columns=["charges"])
-        report = DriftMonitor.detect_drift(
-            X_new=X, baseline_path=str(drift_baseline_path)
-        )
+        report = DriftMonitor.detect_drift(X_new=X, baseline_path=str(drift_baseline_path))
         assert isinstance(report, DriftReport)
         assert not report.has_drift
 
-    def test_detects_drift_on_age_mean_shift(
-        self, tmp_path: Path
-    ) -> None:
+    def test_detects_drift_on_age_mean_shift(self, tmp_path: Path) -> None:
         """A batch with age shifted to [200, 250] vs baseline [18, 65] → drift."""
         n = 100
         X_train = _make_numeric_df(n, seed=1)
@@ -239,7 +226,7 @@ class TestDetectDrift:
         X_new = pd.DataFrame(
             {
                 "age": rng.uniform(200.0, 250.0, n),  # extreme mean shift
-                "bmi": X_train["bmi"].values,          # unchanged
+                "bmi": X_train["bmi"].values,  # unchanged
                 "children": X_train["children"].values,  # unchanged
             }
         )
@@ -282,9 +269,7 @@ class TestDetectDrift:
     ) -> None:
         X = sample_df.drop(columns=["charges"]).iloc[:1]
         with pytest.warns(RuntimeWarning, match="n_new >= 2"):
-            report = DriftMonitor.detect_drift(
-                X_new=X, baseline_path=str(drift_baseline_path)
-            )
+            report = DriftMonitor.detect_drift(X_new=X, baseline_path=str(drift_baseline_path))
         assert len(report.drifted_features) == 0
         assert report.n_new == 1
 
@@ -442,7 +427,7 @@ class TestSeOfMean:
         """SE = std / sqrt(n)"""
         std = 10.0
         n = 100
-        expected = std / (n ** 0.5)
+        expected = std / (n**0.5)
         assert abs(_se_of_mean(std, n) - expected) < 1e-12
 
     def test_n_zero_does_not_raise(self) -> None:
