@@ -90,6 +90,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase repository name
+        run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
 
       # ──────────────────────────────────────────────────────────────────────
       # API IMAGE (prod target)
@@ -100,7 +103,7 @@ jobs:
         id: meta-api
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-api
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-api
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -138,7 +141,7 @@ jobs:
             -e CUDA_VISIBLE_DEVICES="" \
             -e STRICT_AUTH="false" \
             -p 8000:8000 \
-            ${{ env.REGISTRY }}/${{ github.repository }}-api:latest
+            ${{ env.REGISTRY }}/${{ env.REPO_LC }}-api:latest
 
       - name: Wait for API to be ready (max 45s)
         run: |
@@ -215,7 +218,7 @@ jobs:
         id: meta-mlflow
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-mlflow
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-mlflow
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -243,7 +246,7 @@ jobs:
         id: meta-optuna
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-optuna
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-optuna
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -272,7 +275,7 @@ jobs:
         id: meta-streamlit
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-streamlit
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-streamlit
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -307,8 +310,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Pull commands:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ github.repository }}-api:latest" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ github.repository }}-mlflow:latest" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ github.repository }}-optuna:latest" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ github.repository }}-streamlit:latest" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.REPO_LC }}-api:latest" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.REPO_LC }}-mlflow:latest" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.REPO_LC }}-optuna:latest" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.REPO_LC }}-streamlit:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
