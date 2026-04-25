@@ -1063,11 +1063,17 @@ conformal:
   #   holdout = 10,000 × 0.20 = 2,000 — well above the 30-sample guard
   # The original 0.20 value was chosen to push 1300-sample n_cal from 213→272 (7→9 bins).
   # At 50k that concern is gone; 0.20 is kept because it is valid for both code paths.
-  # ⚠️ DUAL-SEMANTICS INVERSION RISK: both code paths treat this as the holdout
-  # fraction, but with opposite labelling in surrounding comments/variables.
-  # Recommended long-term fix: split into two independent keys:
-  #   conformal.uncalibrated_split_ratio   (current uncalibrated path)
-  #   conformal.calibrated_split_ratio     (calibrated-isotonic path)
+  #
+  # ⚠️  DUAL-SEMANTICS INVERSION RISK (unresolved — tracked below):
+  # calibration_split_ratio is read by TWO code paths in train.py with opposite labelling.
+  # Both paths currently use 0.20 safely, but any future tuning of one path will
+  # silently affect the other.
+  #
+  # TODO (train.py update required): replace calibration_split_ratio with two
+  # independent keys and update both read sites in train.py accordingly:
+  #   uncalibrated_split_ratio: 0.20   # uncalibrated conformal path — holdout fraction
+  #   calibrated_split_ratio: 0.20     # calibrated-isotonic path — holdout fraction
+  # Once train.py is updated, deprecate and remove calibration_split_ratio.
 
 # ====================================================
 # TRAINING CONFIGURATION
@@ -1488,7 +1494,9 @@ hybrid_predictor:
     # At 600.0 the ML baseline sits just above the threshold — both models still
     # exceed it in the current run, so profitability_score remains 50/50 for both.
     # The profit gap only becomes visible in the gate once this value is raised above
-    # the hybrid profit/policy ($677), which requires the actuarial VH fix first
+    # the hybrid profit/policy (current: $656/policy as of 2026-04-25 evaluation;
+    # target: >$680 after VH actuarial fix reduces churn below ML baseline),
+    # which requires the actuarial VH fix first
     # (churn must drop to ~3% before a higher target can be justified).
     # Tuning guide: after smoker×BMI×age interaction is added and churn drops to <3%,
     # revisit raising to 650–700 to expose hybrid's profit advantage in BizScore.
@@ -2086,7 +2094,8 @@ evaluation:
 # 3. KNOWN LIMITATIONS (v7.5.0 — updated 2026-04-12 post-evaluation)
 #    - VH segment actuarial/ML ratio = 0.608x (confirmed by 05_vh_analysis.ipynb)
 #      Option 3 (VH-restricted hybrid) is definitively closed — actuarial is worse there
-#      requires smoker×BMI×age interaction term in _calculate_actuarial_prediction
+#      smoker×BMI×age interaction term is ACTIVE (smoker_bmi_age_coeff=8.0 in
+#      actuarial_params; implemented in predict.py _calculate_actuarial_prediction)
 #    - Churn rate 6.44% (vs ML 3.95%) — root cause: actuarial-path over-prices a small
 #      subset in the $7,500–$18,037 transition zone; each over-priced policy triggers CLV churn cost
 #    - CI mean width $11,859 = 92% of mean premium ($12,836); must be disclosed to API consumers
@@ -2145,15 +2154,16 @@ api:
   model_cache_size: 2
   warm_up_on_start: true
 
-  # M-10 NOTE: this block is currently NOT consumed by any server-side code.
+  # ⚠️  RATE LIMITING IS NOT ENFORCED — this entire block is a placeholder.
   # routes.py uses only a threading.Semaphore (_MAX_CONCURRENT) for overload
   # protection — a global cap with no per-client fairness.  A single abusive
   # caller can exhaust all semaphore slots and starve other users.
   # These parameters are placeholders for a future per-client rate-limiter
   # (e.g. slowapi + Redis, or an ASGI middleware).  Do NOT assume they are
   # enforced in production.  api.host=127.0.0.1 limits exposure for now.
+  # TODO: Implement per-client rate limiting before any non-localhost deployment.
   rate_limit:
-    enabled: false    # ← has no effect; no middleware reads this key yet
+    enabled: false    # ← HAS NO EFFECT — no middleware reads this key yet
     requests: 100
     period: 60
 
