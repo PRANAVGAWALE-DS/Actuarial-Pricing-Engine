@@ -78,13 +78,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226  # v3.8.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v3.8.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -98,7 +98,7 @@ jobs:
 
       - name: Extract metadata — api
         id: meta-api
-        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-api
           tags: |
@@ -108,7 +108,7 @@ jobs:
 
       # Build without push — loaded into local daemon for smoke test.
       - name: Build api image (no push)
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -193,7 +193,7 @@ jobs:
       # ──────────────────────────────────────────────────────────────────────
 
       - name: Push api image to GHCR
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -213,7 +213,7 @@ jobs:
 
       - name: Extract metadata — mlflow
         id: meta-mlflow
-        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-mlflow
           tags: |
@@ -222,7 +222,7 @@ jobs:
             type=ref,event=branch
 
       - name: Build and push mlflow image
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -241,7 +241,7 @@ jobs:
 
       - name: Extract metadata — optuna
         id: meta-optuna
-        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-optuna
           tags: |
@@ -250,7 +250,7 @@ jobs:
             type=ref,event=branch
 
       - name: Build and push optuna image
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -270,7 +270,7 @@ jobs:
 
       - name: Extract metadata — streamlit
         id: meta-streamlit
-        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-streamlit
           tags: |
@@ -279,7 +279,7 @@ jobs:
             type=ref,event=branch
 
       - name: Build and push streamlit image
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v5.4.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
