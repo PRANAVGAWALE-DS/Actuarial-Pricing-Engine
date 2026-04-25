@@ -5,7 +5,7 @@
 # SERVICES
 # ────────
 #   mlflow     MLflow tracking server      → http://localhost:5000
-#   optuna     Optuna dashboard            → http://localhost:8080
+#   optuna     Optuna dashboard            → http://localhost:8088
 #   api        FastAPI + GPU               → http://localhost:8000
 #                Swagger UI               → http://localhost:8000/docs
 #   streamlit  Interactive dashboard       → http://localhost:8501
@@ -131,7 +131,7 @@ services:
   #      against optuna==4.5.0.
   #
   # DB path : models/optuna_studies.db
-  # URL     : http://localhost:8080
+  # URL     : http://localhost:8088
   # ───────────────────────────────────────────────────────────────────────────
   optuna:
     build:
@@ -147,7 +147,7 @@ services:
       # sqlite:////app/models/optuna_studies.db — the studies/ path is never
       # read. Add it back here only if you relocate the DB.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8088/"]
       interval: 30s
       timeout: 10s
       retries: 5
