@@ -1330,11 +1330,11 @@ class TimeoutManager:
                 raise TimeoutError(f"Training timeout: {seconds}s exceeded")
 
             old_handler = signal.signal(signal.SIGALRM, handler)
-            signal.alarm(seconds)
+            signal.alarm(seconds)  # type: ignore[attr-defined]
             try:
                 yield self
             finally:
-                signal.alarm(0)
+                signal.alarm(0)  # type: ignore[attr-defined]
                 signal.signal(signal.SIGALRM, old_handler)
         else:
             # Windows: background thread sets _timed_out flag after `seconds`.

@@ -2527,6 +2527,7 @@ def check_ci_coverage(
     X_test: pd.DataFrame,
     y_true: np.ndarray,
     confidence_level: float = 0.90,
+    _precomputed_result: dict | None = None,
 ) -> dict:
     """Verify empirical CI coverage against the nominal conformal level on the test set.
 
@@ -2543,17 +2544,25 @@ def check_ci_coverage(
     nominal=0.90 is approximately ±0.042, so 0.88 is well within expected range.
 
     Args:
-        pipeline:         Trained PredictionPipeline (must have conformal artifact loaded).
-        X_test:           Test features as a DataFrame.
-        y_true:           Ground-truth charges in original dollar space.
-        confidence_level: Nominal coverage level — must match what was used at training.
+        pipeline:             Trained PredictionPipeline (must have conformal artifact loaded).
+        X_test:               Test features as a DataFrame.
+        y_true:               Ground-truth charges in original dollar space.
+        confidence_level:     Nominal coverage level — must match what was used at training.
+        _precomputed_result:  Optional precomputed dict from pipeline.predict() over the
+                              same X_test (e.g. the Step 3 ML result in evaluate.py).
+                              When shape-compatible, passed to predict_with_intervals to
+                              avoid a redundant feature engineering pass (Step 6a fix).
 
     Returns:
         Dict with keys: nominal, empirical, gap, mean_width, method, n_samples, valid.
         On failure: {"error": str}.
     """
     try:
-        ci_result = pipeline.predict_with_intervals(X_test, confidence_level=confidence_level)
+        ci_result = pipeline.predict_with_intervals(
+            X_test,
+            confidence_level=confidence_level,
+            _precomputed_result=_precomputed_result,
+        )
         ci = ci_result.get("confidence_intervals") or {}
         if "lower_bound" not in ci:
             return {
@@ -2770,12 +2779,19 @@ def main():
         )
 
         print("\n[STEP 5] Getting hybrid predictions...")
+        # F3 fix: pass _precomputed_ml_result so HybridPredictor.predict() reuses the
+        # Step 3 ML result instead of running feature engineering + XGBoost a second
+        # time.  _predict_in_batches forwards **kwargs verbatim to predictor.predict().
+        # When n <= inference_limit (fast path), this eliminates one full FE pass.
+        # When n > inference_limit (chunked path), HybridPredictor's shape guard
+        # detects the mismatch per-chunk and falls back to fresh ML inference safely.
         hybrid_result = _predict_in_batches(
             hybrid,
             X_test,
             inference_limit=_inference_limit,
             return_components=True,
             return_reliability=True,
+            _precomputed_ml_result=ml_result,
         )
         hybrid_preds = np.array(hybrid_result["predictions"])
 
@@ -3029,11 +3045,16 @@ def main():
             )
             _eval_ci_level = 0.90
         print("\n[STEP 6a] Verifying CI coverage on test set...")
+        # F3 fix: pass the Step 3 ml_result as _precomputed_result so
+        # predict_with_intervals skips a third redundant feature engineering pass
+        # on the same X_test.  Shape is validated inside predict_with_intervals
+        # before the precomputed result is accepted.
         ci_coverage = check_ci_coverage(
             pipeline=ml_pipeline,
             X_test=X_test,
             y_true=y_test.values,
             confidence_level=_eval_ci_level,
+            _precomputed_result=ml_result,
         )
         _ci_valid = ci_coverage.get("valid", False)
         _ci_empirical = ci_coverage.get("empirical", float("nan"))

@@ -4,11 +4,11 @@
 
 ### A production-grade ML pipeline with hybrid routing, conformal prediction guarantees, and full MLOps instrumentation
 
-[![CI](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml) [![CD](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-20%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
+[![CI](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml) [![CD](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-30%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
 
 <br/>
 
-**R² = 0.9006 &nbsp;|&nbsp; RMSE = \$3,812 &nbsp;|&nbsp; MAE = \$2,549 &nbsp;|&nbsp; 90% Conformal Coverage Guaranteed**
+**RMSE = \$3,934 &nbsp;|&nbsp; Cost-Weighted R² = 0.8788 &nbsp;|&nbsp; 91.1% Empirical Conformal Coverage (90% target)**
 
 <br/>
 
@@ -47,7 +47,7 @@ Insurance premium prediction is deceptively simple on the surface — a regressi
 
 **The Uncertainty Problem.** Quoting a single number is commercially irresponsible. Regulators and actuaries want calibrated confidence intervals — not arbitrary ±20% bands, but *statistically guaranteed* coverage at a stated level.
 
-**The Bias Problem.** Yeo-Johnson transformation of the target introduces inverse-transform bias at inference time. Three-tier multiplicative bias correction (segmented at the $9,257 and $14,276 quantiles) is applied post-prediction to recenter the distribution.
+**The Bias Problem.** Yeo-Johnson transformation of the target introduces inverse-transform bias at inference time. Three-tier multiplicative bias correction (segmented at the $10,000 low/mid boundary, with mid/high boundary sourced from the trained artifact) is applied post-prediction to recenter the distribution.
 
 **The Segment Problem.** A single global model achieves R²=0.90 overall, but produces negative R² on narrow charge bands (Low–High+) due to the bimodal distribution of insurance charges. The solution: a dedicated `HighValueSpecialist` XGBoost model with a smooth blend zone, activated automatically at inference above `$16,701`.
 
@@ -71,7 +71,7 @@ flowchart TD
     E --> F{Model Selection\nApplicant Risk Profile}
 
     F -->|"< $16,701\nStandard tier"| G["🌲 XGBoost Median Model\nreg:squarederror\n5 candidate models evaluated\nOptuna HPO · 268.6s train"]
-    F -->|"$16,701 – $21,695\nBlend zone"| H["🔀 Blended Prediction\nWeighted interpolation\nbase ↔ specialist"]
+    F -->|"$16,701 – $21,695\nSpecialist zone\n(soft blend: $18,037–$21,695)"| H["🔀 Blended Prediction\nWeighted interpolation\nbase ↔ specialist"]
     F -->|"> $21,695\nVery High tier"| I["🎯 XGBoost Specialist\nHighValueSpecialist\nhigh-value training samples\nThreshold: $16,701"]
 
     H --> J
@@ -108,7 +108,7 @@ flowchart TD
 ## ✨ Key Technical Features
 
 ### 🎯 Two-Model Hybrid Architecture
-The system deploys two XGBoost models with automatic routing. The base model (`xgboost_median`, `reg:squarederror`) handles the full distribution. For predictions above `$16,701`, a `HighValueSpecialist` model trained exclusively on high-value samples takes over — with a smooth linear blend zone between `$16,701` and `$21,695` preventing sharp discontinuities at the routing boundary.
+The system deploys two XGBoost models with automatic routing. The base model (`xgboost_median`, `reg:squarederror`) handles the full distribution. For predictions above `$16,701`, a `HighValueSpecialist` model trained exclusively on high-value samples takes over — with a soft blend window between `$18,037` and `$21,695` that interpolates smoothly between global and specialist outputs, preventing sharp discontinuities at the routing boundary.
 
 ### 📐 Conformal Prediction Intervals
 Prediction intervals are not heuristic bands — they carry a **distribution-free coverage guarantee** via split-conformal inference. Calibrated on 6,982 held-out validation predictions using a **heteroscedastic (10-bin) conformal** method, the system achieves **91.1% empirical coverage** on the test set (target: 90%), with per-segment reporting:
@@ -205,12 +205,12 @@ Results are saved to `reports/ci_gate_results.json` and uploaded as a CI artifac
 |--------|---------|--------|
 | **RMSE** | **$3,935.61** | **$3,934.34** |
 | **MAE** | — | — |
-| **R²** | **0.9006** (train) | — |
-| **MAPE** | 25.41% | 26.37% |
+| **Val R²** | **0.8963** (model selection) | — |
+| **MAPE** | 26.70% | 27.79% |
 | **MALE** | 0.267 | 0.270 |
 | **SMAPE** | 25.99% | 26.37% |
 | Conformal Coverage (90% target) | 91.1% ✅ | 90.7% ✅ |
-| Avg CI Width (90%) | $17,058 | $11,680 |
+| Avg CI Width (90%) | $11,680 | $11,680 |
 | Within ±5% | 16.30% | — |
 | Within ±10% | 29.97% | — |
 | Within ±20% | 52.93% | — |
@@ -266,7 +266,7 @@ insurance-ml/
 │   ├── data.py                   # Data loading, validation, DVC integration
 │   ├── features.py               # FeatureEngineer: 46-feature pipeline + Yeo-Johnson
 │   ├── models.py                 # ModelManager: train, evaluate, calibrate, explain
-│   ├── train.py                  # Orchestration: 11-model sweep + Optuna HPO
+│   ├── train.py                  # Orchestration: 5-model sweep + Optuna HPO
 │   ├── predict.py                # PredictionPipeline: routing + bias correction + conformal intervals
 │   ├── evaluate.py               # Metrics, segment analysis, cost-weighted R² evaluation
 │   ├── diagnostics.py            # Residual analysis, calibration checks, drift
@@ -451,7 +451,7 @@ Single-observation premium prediction. Returns `prediction` (USD), `model_used`,
 ```json
 {
   "prediction": 7842.31,
-  "model_used": "hybrid_xgboost_median_v6.3.1",
+  "model_used": "hybrid_xgboost_median_v6.3.3",
   "prediction_id": "a3f2c1d4-9e2b-4f8c-b1a0-7c5d3e8f9a2b"
 }
 ```
@@ -542,7 +542,7 @@ Stage 2  │           │
   Type Check      Tests + Coverage
   (mypy)          (pytest)
   src/ + api/     Flags via [tool.pytest.ini_options] in pyproject.toml.
-                  Coverage gate: fail_under = 20 (pyproject.toml
+                  Coverage gate: fail_under = 30 (pyproject.toml
                   [tool.coverage.report] — raise as coverage grows)
                 │
 Stage 3 ── Model Regression Gate
@@ -754,4 +754,3 @@ Built by **PG** · [GitHub](https://github.com/PRANAVGAWALE-DS) · [LinkedIn](ht
 *If this project was useful, consider starring it ⭐*
 
 </div>
-

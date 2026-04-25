@@ -369,7 +369,7 @@ class HighValueSegmentRouter:
             "🔀 SegmentRouter: global=%d | blend=%d | specialist=%d "
             "(specialist threshold=$%.0f, blend window=[$%.0f, $%.0f]) "
             "— NOTE: these counts use the specialist routing threshold, "
-            "not the HybridPredictor actuarial threshold ($9,500).",
+            "not the HybridPredictor actuarial threshold.",
             n_low,
             n_blend,
             n_high,
@@ -618,8 +618,17 @@ class PredictionPipeline:
                         self.model.get_booster().predict(_init_dmat)
                     else:
                         self.model.predict(test_output)
-                except Exception:
-                    # Non-XGBoost model or DMatrix unavailable — fall back silently.
+                except (ImportError, ValueError, RuntimeError, AttributeError) as _init_err:
+                    # Non-XGBoost model or DMatrix construction/predict failed.
+                    # Log the reason so the fallback is not completely silent —
+                    # a bare `except Exception` previously swallowed genuine errors
+                    # (e.g. shape mismatch, GPU OOM during init) with no trace.
+                    logger.debug(
+                        "ℹ️  DMatrix init-probe fallback (%s: %s) — "
+                        "using sklearn predict path for validation call.",
+                        type(_init_err).__name__,
+                        _init_err,
+                    )
                     self.model.predict(test_output)
 
                 logger.info(f"✅ Feature validation passed: {expected_features} features")
@@ -1213,15 +1222,38 @@ class PredictionPipeline:
             raise
 
     def predict_with_intervals(
-        self, input_data: pd.DataFrame, confidence_level: float = 0.90
+        self,
+        input_data: pd.DataFrame,
+        confidence_level: float = 0.90,
+        _precomputed_result: "dict[str, Any] | None" = None,
     ) -> dict[str, Any]:
         """
         Generate predictions with CORRECT confidence intervals
 
         Confidence intervals are now computed in log space BEFORE inverse transform
+
+        (_precomputed_result): When evaluate.py has already called self.predict()
+        for Step 3 (ML predictions), it can pass that result dict here so feature
+        engineering + XGBoost inference are not repeated in Step 6a (CI coverage check).
+        Shape is validated before use; a mismatch falls back to a fresh predict() call.
+        Intentionally private (underscore prefix) — internal optimisation only.
         """
         if input_data.empty:
             raise ValueError("Input data cannot be empty")
+
+        def _use_precomputed(pre: "dict[str, Any] | None") -> bool:
+            """Return True only when the precomputed result is shape-compatible."""
+            if pre is None:
+                return False
+            n_pre = len(pre.get("predictions", []))
+            if n_pre != len(input_data):
+                logger.warning(
+                    f"⚠️  _precomputed_result has {n_pre} predictions but "
+                    f"input_data has {len(input_data)} rows — "
+                    "ignoring precomputed result and running fresh predict()."
+                )
+                return False
+            return True
 
         # ── CI SOURCE PRIORITY ────────────────────────────────────────────────
         # Priority 1: model._validation_residuals  (conformal calibration data,
@@ -1281,12 +1313,27 @@ class PredictionPipeline:
                     f"   model._validation_residuals is also unavailable.\n"
                     f"   Retrain to populate conformal calibration data."
                 )
-                result = self.predict(input_data, return_reliability=True)
+                result = (
+                    _precomputed_result
+                    if _use_precomputed(_precomputed_result)
+                    else self.predict(input_data, return_reliability=True)
+                )
+                if result is None:  # narrow type: _use_precomputed guarantees non-None
+                    result = self.predict(input_data, return_reliability=True)
                 result["confidence_intervals"] = None
                 return result
 
         # ── Single-pass: call predict() once, reuse its log-space output ────
-        result = self.predict(input_data, return_reliability=True)
+        # Use precomputed result when available to avoid a redundant feature
+        # engineering + XGBoost inference pass (e.g. evaluate.py Step 6a reusing
+        # the Step 3 ML predictions already computed over the same X_test).
+        result = (
+            _precomputed_result
+            if _use_precomputed(_precomputed_result)
+            else self.predict(input_data, return_reliability=True)
+        )
+        if result is None:  # narrow type: _use_precomputed guarantees non-None
+            result = self.predict(input_data, return_reliability=True)
 
         try:
             predictions_log = np.array(result["predictions_log_space"])
@@ -2830,7 +2877,11 @@ if __name__ == "__main__":
 
         # Test confidence intervals
         print("\n[4/6] Testing Confidence Intervals (C1 — Heteroscedastic)...")
-        ci_result = pipeline.predict_with_intervals(test_data, confidence_level=0.95)
+        # Use production default (0.90) so this test reflects actual API behaviour.
+        # Previously hardcoded 0.95 — mismatched the method default and caused the
+        # README to quote 95% CI widths ($16,322) instead of the 90% production
+        # value ($11,680). Both the CI output and the README must use 0.90.
+        ci_result = pipeline.predict_with_intervals(test_data, confidence_level=0.90)
 
         if ci_result.get("confidence_intervals"):
             ci = ci_result["confidence_intervals"]
