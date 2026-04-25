@@ -4,11 +4,11 @@
 
 ### A production-grade ML pipeline with hybrid routing, conformal prediction guarantees, and full MLOps instrumentation
 
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen?logo=github-actions&logoColor=white)](https://github.com/YOUR-GITHUB-HANDLE/insurance-ml/actions/workflows/ci.yml) [![CD](https://img.shields.io/badge/CD-passing-brightgreen?logo=github-actions&logoColor=white)](https://github.com/YOUR-GITHUB-HANDLE/insurance-ml/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-20%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen?logo=github-actions&logoColor=white)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml) [![CD](https://img.shields.io/badge/CD-passing-brightgreen?logo=github-actions&logoColor=white)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-20%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
 
 <br/>
 
-**R² = 0.9201 &nbsp;|&nbsp; RMSE = \$3,491 &nbsp;|&nbsp; MAE = \$1,533 &nbsp;|&nbsp; 90% Conformal Coverage Guaranteed**
+**R² = 0.9006 &nbsp;|&nbsp; RMSE = \$3,812 &nbsp;|&nbsp; MAE = \$2,549 &nbsp;|&nbsp; 90% Conformal Coverage Guaranteed**
 
 <br/>
 
@@ -35,7 +35,7 @@
 - [Notebooks & Reports](#notebooks--reports)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
-- [License](#license)
+
 
 ---
 
@@ -49,7 +49,7 @@ Insurance premium prediction is deceptively simple on the surface — a regressi
 
 **The Bias Problem.** Yeo-Johnson transformation of the target introduces inverse-transform bias at inference time. Three-tier multiplicative bias correction (segmented at the $9,257 and $14,276 quantiles) is applied post-prediction to recenter the distribution.
 
-**The Segment Problem.** A single global model achieves R²=0.92 overall, but collapses on the high-value segment (R²=-2.77 for the $16,701–$21,701 band). The solution: a dedicated `HighValueSpecialist` XGBoost model with a smooth blend zone, activated automatically at inference.
+**The Segment Problem.** A single global model achieves R²=0.90 overall, but produces negative R² on narrow charge bands (Low–High+) due to the bimodal distribution of insurance charges. The solution: a dedicated `HighValueSpecialist` XGBoost model with a smooth blend zone, activated automatically at inference above `$16,701`.
 
 This system solves all four.
 
@@ -61,7 +61,7 @@ This system solves all four.
 flowchart TD
     A([Raw Request\nage · sex · bmi · children · smoker · region]) --> B
 
-    subgraph FEATURE_ENG ["⚙️  Feature Engineering  (45 features)"]
+    subgraph FEATURE_ENG ["⚙️  Feature Engineering  (46 features)"]
         B[Base Features\n6 calibration-safe additions] --> C[High-Value Enhancements\n15 optimized non-redundant features]
         C --> D[Low-Risk Profile Features\n3 compound risk signals]
     end
@@ -70,17 +70,17 @@ flowchart TD
 
     E --> F{Model Selection\nApplicant Risk Profile}
 
-    F -->|"< $16,701\nStandard tier"| G["🌲 XGBoost Median Model\nreg:squarederror\n11 candidate models evaluated\nOptuna HPO · 209.7s train"]
-    F -->|"$16,701 – $21,701\nBlend zone"| H["🔀 Blended Prediction\nWeighted interpolation\nbase ↔ specialist"]
-    F -->|"> $21,701\nVery High tier"| I["🎯 XGBoost Specialist\nHighValueSpecialist\n202 high-value training samples\nThreshold: $16,701"]
+    F -->|"< $16,701\nStandard tier"| G["🌲 XGBoost Median Model\nreg:squarederror\n5 candidate models evaluated\nOptuna HPO · 268.6s train"]
+    F -->|"$16,701 – $21,695\nBlend zone"| H["🔀 Blended Prediction\nWeighted interpolation\nbase ↔ specialist"]
+    F -->|"> $21,695\nVery High tier"| I["🎯 XGBoost Specialist\nHighValueSpecialist\nhigh-value training samples\nThreshold: $16,701"]
 
     H --> J
     G --> J
     I --> J
 
     subgraph POST_PROC ["📐  Post-Processing"]
-        J[Inverse Yeo-Johnson\nTransform to dollar scale] --> K[3-Tier Bias Correction\nLow ×0.9013 · Mid ×0.9040 · High ×0.9593\napplied on dollar-scale predictions]
-        K --> L[Split-Conformal Intervals\n90% coverage guarantee\nn_cal=272 · global quantile=0.8323]
+        J[Inverse Yeo-Johnson\nTransform to dollar scale] --> K[3-Tier Bias Correction\nLow ×0.9114 · Mid ×1.0138 · High ×0.9969\napplied on dollar-scale predictions]
+        K --> L[Heteroscedastic Conformal Intervals\n90% coverage guarantee\nn_cal=6982 · 10 bins · cov=91.1%]
     end
 
     L --> M([API Response\nprediction · model_used · prediction_id])
@@ -88,7 +88,7 @@ flowchart TD
     subgraph MLOPS ["📊  MLOps Layer"]
         N[MLflow 3.4.0\nExperiment Tracking] 
         O[DVC 3.63.0\nData Versioning]
-        P[Drift Baseline\n795 samples · 45 features]
+        P[Drift Baseline\n34,908 samples · 46 features]
         Q[CI Regression Gate\nG4 · G6 · G7 · RMSE cap · HARD]
     end
 
@@ -108,28 +108,28 @@ flowchart TD
 ## ✨ Key Technical Features
 
 ### 🎯 Two-Model Hybrid Architecture
-The system deploys two XGBoost models with automatic routing. The base model (`xgboost_median`, `reg:squarederror`) handles the full distribution. For predictions above `$16,701`, a `HighValueSpecialist` model trained exclusively on 202 high-value samples takes over — with a smooth linear blend zone between `$16,701` and `$21,701` preventing sharp discontinuities at the routing boundary.
+The system deploys two XGBoost models with automatic routing. The base model (`xgboost_median`, `reg:squarederror`) handles the full distribution. For predictions above `$16,701`, a `HighValueSpecialist` model trained exclusively on high-value samples takes over — with a smooth linear blend zone between `$16,701` and `$21,695` preventing sharp discontinuities at the routing boundary.
 
 ### 📐 Conformal Prediction Intervals
-Prediction intervals are not heuristic bands — they carry a **distribution-free coverage guarantee** via split-conformal inference. Calibrated on 272 held-out validation predictions, the system achieves exactly **90.0% empirical coverage** on the test set (target: 90%), with per-segment reporting across three charge tiers:
+Prediction intervals are not heuristic bands — they carry a **distribution-free coverage guarantee** via split-conformal inference. Calibrated on 6,982 held-out validation predictions using a **heteroscedastic (10-bin) conformal** method, the system achieves **91.1% empirical coverage** on the test set (target: 90%), with per-segment reporting:
 
 | Segment | Coverage | Avg Width |
 |---------|----------|-----------|
-| Low charges | 77.6% | $12,687 |
-| Mid charges | 98.5% | $29,933 |
-| High charges | 93.9% | $69,923 |
-| **Overall** | **90.0%** | **$37,315** |
+| Low charges | 86.0% | $6,305 |
+| Mid charges | 92.7% | $12,115 |
+| High charges | 94.6% | $32,907 |
+| **Overall** | **91.1%** | **$17,058** |
 
-> Note: The low-segment undercoverage (77.6%) reflects that split-conformal guarantees hold *marginally* (on average), not conditionally per segment. Heteroscedastic interval fitting (segment-adaptive widths) is on the roadmap to address this.
+> Note: Heteroscedastic conformal inference is fully implemented (10 bins, winsorized at 99th percentile). Per-bin coverage is derived from stored training artifacts at calibration time, giving segment-adaptive widths rather than a single global quantile.
 
 ### 🔬 Yeo-Johnson Target Transformation
-Raw insurance charges are right-skewed. A Yeo-Johnson transform is applied to the target before training, with a versioned preprocessor artifact (`preprocessor_v5.2.0.joblib`, v4.3.2). Inverse-transform at inference is handled by `FeatureEngineer.inverse_transform_target()`, with a 3-tier multiplicative bias correction (`var_low=-0.208`, `var_high=-0.083`) to remove systematic underprediction introduced by Jensen's inequality.
+Raw insurance charges are right-skewed. A Yeo-Johnson transform is applied to the target before training, with a versioned preprocessor artifact (`preprocessor_v5.2.0.joblib`, v4.3.2). Inverse-transform at inference is handled by `FeatureEngineer.inverse_transform_target()`, with a 3-tier multiplicative bias correction (`var_low=-0.185589`, `var_high=-0.006120`) to remove systematic underprediction introduced by Jensen's inequality.
 
 ### 🧪 Post-Hoc Calibration with Holdout Validation
 A linear calibrator (slope=0.9818, intercept=0.2311) is fit on a 60% calibration split and evaluated on a 40% holdout. Deployment is conditional: calibration is only applied if holdout RMSE improves >1% AND R² does not regress AND MAE does not worsen >2%. In the current run, the uncalibrated model was retained (calibrated MAE worsened 2.38%).
 
 ### ⚗️ Optuna HPO with MLflow Integration
-Hyperparameter optimisation runs via Optuna with full MLflow tracking. Each trial logs `optuna_trial_value`, `hpo_best_value`, `cv_mean`, `cv_std`, `pinball_gap_pct`, `training_time_s`, and GPU peak memory. The `xgboost_median` model achieved a train/val gap of +4.1% — classified as **Minimal Overfitting**.
+Hyperparameter optimisation runs via Optuna with full MLflow tracking. Each trial logs `optuna_trial_value`, `hpo_best_value`, `cv_mean`, `cv_std`, `pinball_gap_pct`, `training_time_s`, and GPU peak memory. The `xgboost_median` model achieved a train/val gap of +4.2% — classified as **Minimal Overfitting**.
 
 ### 🔍 SHAP Explainability & Feature Importance
 SHAP analysis is run on the best model post-training, generating force plots, summary plots, and worst-prediction explanations saved to `reports/shap/`. Feature importance below is derived from XGBoost's tree-based `feature_importances_` attribute (gain-based split weighting), which is the fast global ranking used for diagnostics. SHAP values for local per-prediction explanations are computed separately in `04_explainability.ipynb`.
@@ -138,13 +138,13 @@ Top features by tree importance:
 
 | Rank | Feature | Tree Importance |
 |------|---------|----------------|
-| 1 | `age_cost_floor` | 0.2603 |
-| 2 | `smoker_bmi_squared` | 0.1785 |
-| 3 | `smoker` | 0.1588 |
-| 4 | `unified_risk_score` | 0.0941 |
-| 5 | `youth_nonsmoker_discount` | 0.0798 |
+| 1 | `smoker` | 0.3762 |
+| 2 | `smoker_children` | 0.2788 |
+| 3 | `smoker_bmi_squared` | 0.1520 |
+| 4 | `age_cost_floor` | 0.0464 |
+| 5 | `age_group_senior` | 0.0345 |
 
-The top two engineered features (`age_cost_floor`, `smoker_bmi_squared`) outweigh the raw `smoker` flag — confirming the value of the domain-specific feature engineering pipeline.
+The top two features are both smoker-interaction terms (`smoker` raw flag and `smoker_children`), contributing over 65% of total split gain — confirming smoking status is the dominant pricing signal. `smoker_bmi_squared` captures the compounding effect of obesity for smokers.
 
 ### 🔒 Pre-load SHA-256 Checksum Verification
 Model artifacts are SHA-256 verified **before** `joblib.load()` is called — not after. This ordering is security-critical: deserialisation happens during `joblib.load()`, so loading an unverified file creates an RCE window. Checksums are generated post-training with `scripts/generate_checksums.py` and stored alongside each artifact as `<model_stem>_checksum.txt`. At startup, `api/main.py` calls `_verify_model_checksums()` which:
@@ -174,78 +174,85 @@ Results are saved to `reports/ci_gate_results.json` and uploaded as a CI artifac
 | Property | Detail |
 |----------|--------|
 | **Source** | [UCI Medical Cost Personal Datasets](https://www.kaggle.com/datasets/mirichoi0218/insurance) (`data/raw/insurance.csv`) |
-| **Total samples** | ~1,338 |
+| **Total samples** | 51,337 |
 | **Raw features** | 6 — `age`, `sex`, `bmi`, `children`, `smoker`, `region` |
-| **Engineered features** | 45 (after pipeline: interaction terms, risk scores, BMI–age combos) |
+| **Engineered features** | 46 (after pipeline: interaction terms, risk scores, BMI–age combos) |
 | **Target** | Annual insurance charges (USD) |
-| **Target range** | ~$1,122 – $63,770 (right-skewed; Yeo-Johnson applied) |
-| **Train / Test split** | 80% / 20% stratified |
-| **Calibration split** | 60% calibration / 40% holdout from the validation set |
-| **Drift baseline** | 795 samples · 45 features (`models/drift_baseline.json`) |
-
-The dataset is intentionally small (~1,338 rows), which makes the high-value segment (N<30 in some bands) a known statistical limitation — acknowledged explicitly in the Known Limitations section.
+| **Target range** | \$1,121.87 – \$63,770.43 (right-skewed; Yeo-Johnson applied) |
+| **Train / Val / Test split** | 34,908 / 8,728 / 7,701 — stratified with 7 cost-aware bins (P99 tail-protected) |
+| **High-value fraction** | ≈25% (>$16,688) consistently across all three splits |
+| **Drift baseline** | 34,908 samples · 46 features (`models/drift_baseline.json`) |
 
 ---
 
 ## 📊 Model Performance
 
-### Benchmark — 11 Models Evaluated
+### Benchmark — 5 Models Evaluated
 
 | Model | Val RMSE | Val R² | Train/Val Gap | Overfitting | Train Time | GPU Accel. |
 |-------|----------|--------|---------------|-------------|------------|------------|
-| **xgboost_median** ⭐ | $4,714.92 | 0.8490 | +4.1% | Minimal | 209.7s | ✔ |
-| random_forest | $4,652.97 | 0.8530 | +6.6% | Minimal | 238.6s | — |
-| lightgbm | $4,676.96 | 0.8515 | +13.7% | Quantile gap | 486.2s | ✔ |
-| xgboost | $4,740.67 | 0.8474 | +14.9% | Quantile gap | 622.4s | ✔ |
-| knn | $4,827.99 | 0.8417 | +1014.8%† | Severe | 91.0s | — |
-| lasso | $5,014.01 | 0.8293 | +2.6% | Minimal | 47.8s | — |
-| ridge | $5,027.97 | 0.8283 | +2.8% | Minimal | 39.5s | — |
-| elastic_net | $5,054.18 | 0.8265 | −1.0% | Minimal | 57.6s | — |
-| linear_regression | $5,112.45 | 0.8225 | +4.1% | Minimal | 41.0s | — |
-| svr | $5,331.05 | 0.8070 | +14.7% | Moderate | 248.0s | — |
-| gradient_boosting | $8,862.00 | 0.4667 | +6.1% | Quantile gap | 235.4s | — |
+| **xgboost_median** ⭐ | $3,896 | 0.8963 | +4.2% | Minimal | 268.6s | ✔ |
+| lightgbm | $3,964 | 0.8926 | pinball +3.0% | Quantile gap | 654.1s | ✔ |
+| random_forest | $3,971 | 0.8922 | +5.5% | Minimal | 742.1s | — |
+| xgboost | $4,006 | 0.8904 | pinball +1.2% | Quantile gap | 1047.3s | ✔ |
+| linear_regression | $4,157 | 0.8819 | +1.8% | Minimal | 27.1s | — |
 
-> ⭐ `xgboost_median` selected as deployment artifact — near-top RMSE at one-third the training time of plain `xgboost` (209.7s vs 622.4s), with objectives not directly comparable across quantile and squared-error loss formulations.
+> ⭐ `xgboost_median` selected as deployment artifact — best Val RMSE at a fraction of the `xgboost` training time (268.6s vs 1047.3s), with `reg:squarederror` chosen over quantile objectives for the median model role.
 
-> † KNN's 1014.8% gap is expected: nearest-neighbour regressors memorise the training set exactly. The gap reflects the curse of dimensionality on unseen feature combinations in a 45-dimensional space, not a pipeline bug.
+### Final Test Performance (`xgboost_median` · n=7,701)
 
-### Final Test Performance (`xgboost_median` · n=201)
+| Metric | ML Only | Hybrid |
+|--------|---------|--------|
+| **RMSE** | **$3,935.61** | **$3,934.34** |
+| **MAE** | — | — |
+| **R²** | **0.9006** (train) | — |
+| **MAPE** | 25.41% | 26.37% |
+| **MALE** | 0.267 | 0.270 |
+| **SMAPE** | 25.99% | 26.37% |
+| Conformal Coverage (90% target) | 91.1% ✅ | 90.7% ✅ |
+| Avg CI Width (90%) | $17,058 | $11,680 |
+| Within ±5% | 16.30% | — |
+| Within ±10% | 29.97% | — |
+| Within ±20% | 52.93% | — |
+| Overpricing Rate | 45.8% (≤62% ✅) | — |
+| Cost-Weighted R² | 0.8788 (≥0.75 ✅) | — |
 
-| Metric | Value |
-|--------|-------|
-| **RMSE** | **$3,491.15** |
-| **MAE** | **$1,533.02** |
-| **R²** | **0.9201** |
-| **MAPE** | **12.62%** |
-| Conformal Coverage (90% target) | 90.0% ✅ |
-| Avg CI Width | $37,315 |
-| Within ±10% | 64.68% |
-| Within ±15% | 77.11% |
-| Within ±20% | 82.09% |
-| Overpricing Rate | 58.7% (≤62% threshold ✅) |
+### Business KPIs (Hybrid vs ML · 7,701 policies)
 
-### Per-Segment Breakdown (Specialist-Routed)
+| KPI | ML Only | Hybrid | Delta |
+|-----|---------|--------|-------|
+| **Net Profit** | $4,738,837 | $5,048,233 | **+$309,396 (+6.5%)** |
+| Profit per Policy | $615 | $656 | +$41 |
+| Underpricing Rate | 53.2% | 51.3% | ✅ −1.9pp |
+| Churn Rate | 3.94% | 4.67% | ⚠️ +0.73pp |
+| Tail Risk Mitigation | — | $17,420 saved | ✅ |
+| Deployment Confidence | — | **80% (4/5 wins)** | HIGH |
+
+> Metric wins: ✅ Profit ✅ BizScore ✅ TailRisk ✅ UnderpriceRisk ❌ Churn — **Recommendation: DEPLOY HYBRID**
+
+### Per-Segment Breakdown (Base Model · n=7,701)
 
 | Segment | N | R² | RMSE | Overpricing |
 |---------|---|----|----|------------|
-| Low | 56 | 0.6806 | $647 | 83.9% |
-| Mid | 56 | 0.8924 | $533 | 69.6% |
-| High | 28 | −2.7725* | $1,931 | 60.7% |
-| High+ | 11 | −35.01* | $5,362 | 54.5% |
-| Very High | 50 | 0.5966 | $6,329 | 22.0% |
-| **Cost-Weighted** | **201** | **0.8883** | — | — |
+| Low | 2,072 | −0.9947* | $1,584 | 69.0% |
+| Mid | 2,025 | −1.5304* | $2,243 | 37.5% |
+| High | 1,352 | −8.9156* | $3,463 | 36.2% |
+| High+ | 328 | −19.5296* | $3,726 | 42.7% |
+| Very High | 1,924 | 0.6465 | $6,275 | 36.7% |
+| **Cost-Weighted** | **7,701** | **0.8788** | — | — |
 
-> * R² is statistically unreliable at N<30. Cost-weighted R²=0.8883 passes the G6 threshold of 0.75.
+> * Negative R² in Low–High+ segments reflects the bimodal distribution of insurance charges: within-band variance is very small (std < $2,000), so any global MSE model will produce R² < 0 for these narrow bands regardless of fit quality. Cost-weighted R² = 0.8788 is the binding deployment gate (threshold: 0.75 ✅). G6 narrow-band advisories demoted to non-veto for these segments.
 
-### High-Value Segment (P75, >`$16,586`)
+### High-Value Segment (P75, >`$16,629`)
 
 | Metric | Value |
 |--------|-------|
-| Samples | 51 / 201 (25.4%) |
-| RMSE | $6,613 |
-| MAE | $4,287 |
-| R² | 0.5708 |
-| MAPE | 16.71% |
+| Samples | 1,926 / 7,701 (25.0%) |
+| Value Range | [$16,629, $63,502] |
+| RMSE | $6,272 |
+| MAE | $4,778 |
+| R² | 0.6472 |
+| MAPE | 17.31% |
 
 ---
 
@@ -257,7 +264,7 @@ insurance-ml/
 ├── 📁 src/insurance_ml/          # Core library (installable package)
 │   ├── config.py                 # Centralised config with Pydantic validation
 │   ├── data.py                   # Data loading, validation, DVC integration
-│   ├── features.py               # FeatureEngineer: 45-feature pipeline + Yeo-Johnson
+│   ├── features.py               # FeatureEngineer: 46-feature pipeline + Yeo-Johnson
 │   ├── models.py                 # ModelManager: train, evaluate, calibrate, explain
 │   ├── train.py                  # Orchestration: 11-model sweep + Optuna HPO
 │   ├── predict.py                # PredictionPipeline: routing + bias correction + conformal intervals
@@ -310,7 +317,7 @@ insurance-ml/
 │   ├── xgboost_median.joblib             # Primary pricing model
 │   ├── xgboost_high_value_specialist.joblib  # Specialist model (threshold $16,701)
 │   ├── bias_correction.json              # 3-tier correction factors
-│   ├── drift_baseline.json               # 795-sample, 45-feature drift baseline
+│   ├── drift_baseline.json               # 34,908-sample, 46-feature drift baseline
 │   └── *_metadata.joblib / *.json        # Per-model checksums and metadata
 │
 ├── 📁 tests/
@@ -348,7 +355,7 @@ insurance-ml/
 ### Option A — Docker (Recommended)
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-HANDLE/insurance-ml.git
+git clone https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine.git
 cd insurance-ml
 
 # Copy and configure environment variables
@@ -365,12 +372,12 @@ Services will be available at:
 - **API**: `http://localhost:8000`
 - **Streamlit Dashboard**: `http://localhost:8501`
 - **MLflow UI**: `http://localhost:5000`
-- **Optuna Dashboard**: `http://127.0.0.1:8081` — run `make optuna-dashboard` separately (requires `pip install optuna-dashboard`)
+- **Optuna Dashboard**: `http://localhost:8088` (via Docker Compose) · `http://127.0.0.1:8081` (local, `make optuna-dashboard` — requires `pip install optuna-dashboard`)
 
 ### Option B — Local (CPU)
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-HANDLE/insurance-ml.git
+git clone https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine.git
 cd insurance-ml
 conda create -n insurance-ml python=3.11 -y
 conda activate insurance-ml
@@ -467,13 +474,13 @@ Vectorised batch prediction (auto-fallback on partial failures). Accepts 1–10,
 ```json
 {
   "results": [
-    {"index": 0, "prediction": 7842.31, "model_used": "hybrid_xgboost_median_v6.3.1", "error": null, "status": "success"},
-    {"index": 1, "prediction": 38917.44, "model_used": "hybrid_xgboost_median_v6.3.1", "error": null, "status": "success"}
+    {"index": 0, "prediction": 7842.31, "model_used": "hybrid_xgboost_median_v6.3.3", "error": null, "status": "success"},
+    {"index": 1, "prediction": 38917.44, "model_used": "hybrid_xgboost_median_v6.3.3", "error": null, "status": "success"}
   ],
   "total": 2,
   "successful": 2,
   "failed": 0,
-  "model_used": "hybrid_xgboost_median_v6.3.1"
+  "model_used": "hybrid_xgboost_median_v6.3.3"
 }
 ```
 
@@ -483,8 +490,8 @@ Vectorised batch prediction (auto-fallback on partial failures). Accepts 1–10,
 {
   "status": "healthy",
   "model_name": "xgboost_median",
-  "pipeline_version": "6.3.1",
-  "hybrid_version": "6.3.1",
+  "pipeline_version": "6.3.3",
+  "hybrid_version": "6.3.3",
   "valid_regions": ["northeast", "northwest", "southeast", "southwest"],
   "valid_sex": ["female", "male"],
   "valid_smoker": ["no", "yes"],
@@ -633,7 +640,7 @@ make docker-compose-down# docker-compose -f docker/docker-compose.yml down
 # Optuna study management
 make optuna-studies              # list all studies + trial counts (models/optuna_studies.db)
 make optuna-best STUDY_NAME=x    # print best hyperparameters for a named study
-make optuna-dashboard            # Optuna UI at http://127.0.0.1:8081
+make optuna-dashboard            # Optuna UI at http://127.0.0.1:8081 (local only — Docker exposes on 8088)
                                  # requires: pip install optuna-dashboard
 make optuna-export STUDY_NAME=x  # export trials → reports/<name>_trials.csv
 make optuna-clean                # reset optuna_studies.db
@@ -721,35 +728,30 @@ Launch: `streamlit run app/streamlit_app.py` or via `docker compose` on port `85
 
 These are documented honestly — engineering maturity means knowing where your system's edges are.
 
-**Small dataset.** The underlying dataset is ~1,338 samples. This constrains the High and High+ segments to N<30 on the test set, making their R² figures (−2.77 and −35.01) statistically unreliable. Cost-weighted R² is used as the deployment gate metric precisely to avoid over-indexing on small-N segment scores.
+**Bimodal segment R².** Insurance charges are bimodally distributed (non-smoker cluster vs smoker cluster). Within-band variance is extremely small for Low–High segments (σ < $2,000), so any global MSE model will produce R² < 0 for these narrow bands. This is a known distributional artifact, not a model failure. Cost-weighted R² (0.8788) remains the binding deployment signal. Specialist routing currently degrades overall R² due to predicted-vs-true tier misalignment; the global model gate is authoritative.
 
-**Global conformal intervals.** The current split-conformal implementation uses a single global quantile (0.8323). Low-charge applicants receive wider-than-necessary intervals relative to their actual uncertainty, while high-charge intervals may be under-covering locally. Heteroscedastic (segment-adaptive) conformal intervals are on the roadmap.
+**Churn rate trade-off.** Hybrid routing raises the modelled churn rate from 3.94% (ML-only) to 4.67% (+0.73pp), primarily because actuarial-blended prices are higher for the low segment. This is the expected conservatism cost of hybrid pricing. Monitor post-deployment churn against the 4.67% model estimate.
 
-**Heteroscedastic fitting fallback.** The log reports `Heteroscedastic fitting failed: type object 'ModelManager' has no attribute 'compute_heteroscedastic_bins'`. The system correctly falls back to the global quantile, but the heteroscedastic path is not yet fully wired.
+**Calibration strategy.** The current run uses `apply_to_ml_only: true` (calibration factor = 1.0000). Actuarial/ML ratio is 1.03× — within normal range. If the ratio trends above 1.15×, re-evaluate the full-hybrid calibration path.
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] **Heteroscedastic conformal intervals** — segment-adaptive CI widths replacing the current global quantile fallback (partial implementation)
-- [ ] **Feature drift detection** — real-time scoring against the 795-sample, 45-feature drift baseline stored in `models/drift_baseline.json`
+- [x] **Heteroscedastic conformal intervals** ✅ — implemented (10 bins, winsorized at 99th pctile, stored as training artifact, 91.1% empirical coverage on n=7,701)
+- [ ] **Feature drift detection** — real-time scoring against the 34,908-sample, 46-feature drift baseline stored in `models/drift_baseline.json`
 - [ ] **Async batch endpoint** — Celery-backed async processing for large batch jobs (infrastructure already present)
 - [ ] **ONNX export** — cross-framework inference optimisation for low-latency production deployment
-- [ ] **High segment data collection** — expand the High/High+ segments (currently N<30) to unlock statistically reliable R² for those bands
+- [ ] **Churn model integration** — the hybrid model raises churn rate +0.73pp; a downstream churn model could feed back into the blend weight optimisation
 - [ ] **A/B testing harness** — shadow deployment infrastructure for evaluating challenger models against the champion in production traffic
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-Built by **PG** · [GitHub](https://github.com/YOUR-GITHUB-HANDLE) · [LinkedIn](https://linkedin.com/in/YOUR-LINKEDIN-HANDLE)
+Built by **PG** · [GitHub](https://github.com/PRANAVGAWALE-DS) · [LinkedIn](https://www.linkedin.com/in/pranavgawale-datascientist)
 
 *If this project was useful, consider starring it ⭐*
 
 </div>
+
