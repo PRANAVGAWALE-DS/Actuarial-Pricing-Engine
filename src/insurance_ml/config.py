@@ -5,24 +5,22 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from dotenv import load_dotenv
 
 
 def _configure_windows_utf8_stdio() -> None:
     """Reconfigure stdout/stderr to UTF-8 on Windows without replacing the stream objects."""
-    if sys.platform != "win32":
-        return
-
-    for stream_name in ("stdout", "stderr"):
-        stream = getattr(sys, stream_name, None)
-        reconfigure = getattr(stream, "reconfigure", None)
-        if not callable(reconfigure):
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, OSError, ValueError):
-            continue
+    if sys.platform == "win32":
+        for stream_name in ("stdout", "stderr"):
+            stream = getattr(sys, stream_name, None)
+            reconfigure = getattr(stream, "reconfigure", None)
+            if not callable(reconfigure):
+                continue
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, OSError, ValueError):
+                continue
 
 
 _configure_windows_utf8_stdio()

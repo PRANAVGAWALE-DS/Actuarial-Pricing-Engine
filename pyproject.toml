@@ -327,6 +327,7 @@ module = [
     "optuna.*",
     "mlflow.*",
     "streamlit.*",
+    "yaml",
 ]
 ignore_missing_imports = true
 

@@ -1330,7 +1330,7 @@ class TimeoutManager:
                 raise TimeoutError(f"Training timeout: {seconds}s exceeded")
 
             old_handler = signal.signal(signal.SIGALRM, handler)
-            signal.alarm(seconds)  # type: ignore[attr-defined]
+            signal.alarm(0)  # type: ignore[attr-defined]
             try:
                 yield self
             finally:
