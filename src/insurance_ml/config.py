@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from dotenv import load_dotenv
 
 
@@ -14,7 +14,7 @@ def _configure_windows_utf8_stdio() -> None:
     if sys.platform != "win32":
         return
 
-    for stream_name in ("stdout", "stderr"):
+    for stream_name in ("stdout", "stderr"):  # type: ignore[unreachable]
         stream = getattr(sys, stream_name, None)
         reconfigure = getattr(stream, "reconfigure", None)
         if not callable(reconfigure):
