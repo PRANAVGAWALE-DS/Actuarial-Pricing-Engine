@@ -4,7 +4,7 @@
 
 ### A production-grade ML pipeline with hybrid routing, conformal prediction guarantees, and full MLOps instrumentation
 
-[![CI](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml) [![CD](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-30%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
+[![Live Demo](https://img.shields.io/badge/Demo-Live-brightgreen?logo=streamlit&logoColor=white)](https://pg-aiml-actuarial-pricing-dashboard.hf.space) [![API Docs](https://img.shields.io/badge/API-Swagger-009688?logo=fastapi&logoColor=white)](https://pg-aiml-actuarial-pricing-api.hf.space/docs) [![CI](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/ci.yml) [![CD](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml/badge.svg)](https://github.com/PRANAVGAWALE-DS/Actuarial-Pricing-Engine/actions/workflows/cd.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/) [![XGBoost](https://img.shields.io/badge/XGBoost-3.1.1-orange)](https://xgboost.readthedocs.io) [![FastAPI](https://img.shields.io/badge/FastAPI-0.118.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![MLflow](https://img.shields.io/badge/MLflow-3.4.0-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org) [![DVC](https://img.shields.io/badge/DVC-3.63.0-945DD6?logo=dvc&logoColor=white)](https://dvc.org) [![Coverage](https://img.shields.io/badge/coverage-30%25%2B-brightgreen)](htmlcov/) [![Ruff](https://img.shields.io/badge/linter-ruff-FCC21B)](https://github.com/astral-sh/ruff) [![Version](https://img.shields.io/badge/version-4.2.0-blue)](pyproject.toml)
 
 <br/>
 
@@ -16,6 +16,18 @@
 > *High-value claims (\$16,701+) are routed to a dedicated specialist model with a blended transition zone — because the tails of a distribution deserve their own model.*
 
 </div>
+
+---
+
+## 🚀 Live Deployment
+
+| Service | URL |
+|---------|-----|
+| **Interactive Dashboard** | [pg-aiml-actuarial-pricing-dashboard.hf.space](https://pg-aiml-actuarial-pricing-dashboard.hf.space) |
+| **API + Swagger Docs** | [pg-aiml-actuarial-pricing-api.hf.space/docs](https://pg-aiml-actuarial-pricing-api.hf.space/docs) |
+| **Health Check** | [pg-aiml-actuarial-pricing-api.hf.space/health](https://pg-aiml-actuarial-pricing-api.hf.space/health) |
+
+> Hosted on Hugging Face Spaces (CPU Basic). No login required — open the dashboard and run a prediction directly.
 
 ---
 
@@ -714,13 +726,15 @@ Auto-generated reports in `reports/` include calibration curves, residual diagno
 
 ### Streamlit Dashboard (`app/streamlit_app.py`)
 
+**🌐 Live:** [pg-aiml-actuarial-pricing-dashboard.hf.space](https://pg-aiml-actuarial-pricing-dashboard.hf.space)
+
 The interactive dashboard provides:
 - **Single prediction** panel — enter applicant details, receive predicted premium (`prediction`), model identifier (`model_used`), and a unique `prediction_id`
 - **Batch prediction** — upload a CSV, get vectorised predictions with automatic fallback on malformed rows
 - **Model info panel** — surfaces `pipeline_version`, `hybrid_version`, `model_name`, and valid categorical sets (`valid_regions`, `valid_sex`, `valid_smoker`) from the `/health` endpoint; cross-checks API categorical schema against Streamlit's local constants and logs a warning on drift
 - **Performance summary** — test-set metrics and per-segment breakdown rendered inline
 
-Launch: `streamlit run app/streamlit_app.py` or via `docker compose` on port `8501`.
+Launch locally: `streamlit run app/streamlit_app.py` or via `docker compose` on port `8501`.
 
 ---
 
